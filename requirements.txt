@@ -1,0 +1,6 @@
+black
+matplotlib
+numpy
+pydrake
+pytest
+scipy
