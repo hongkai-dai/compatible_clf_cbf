@@ -1,0 +1,21 @@
+# This workflow will run unit test.
+
+name: unit test
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: unit test
+        run: pytest tests
