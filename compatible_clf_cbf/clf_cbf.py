@@ -1,11 +1,8 @@
-from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
-import numpy.typing as npt
 
 import pydrake.symbolic as sym
-import pydrake.solvers as solvers
 
 from compatible_clf_cbf.utils import check_array_of_polynomials
 

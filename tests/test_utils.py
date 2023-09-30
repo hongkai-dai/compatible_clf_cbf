@@ -1,7 +1,7 @@
 import compatible_clf_cbf.utils as mut
 
 import numpy as np
-import pytest
+import pytest  # noqa
 
 import pydrake.symbolic as sym
 
