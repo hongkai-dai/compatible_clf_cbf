@@ -25,3 +25,12 @@ $$\exists u\in\mathcal{U} \begin{cases}L_fV(x)+L_gV(x)u\leq -\kappa_VV(x)\\
  L_fb(x)+L_gb(x)u\geq-\kappa_bb(x)\end{cases}.$$
 
 We will certify and synthesize such compatible CLF and CBFs through Sum-of-Squares optimization.
+
+# Getting started
+After installing all the dependencies in `requirements.txt`, please make sure that you can use Mosek solver. Please set the environment variable that points to the Mosek license as
+```
+export MOSEKLM_LICENSE_FILE=/path/to/mosek.lic
+```
+
+## Using Drake
+We formulate and solve the optimization problem using [Drake](https://drake.mit.edu). To get started with Drake, you can checkout its tutorials (on the Drake webpage, navigate to "Resources"->"Tutorials"). Drake hosts several tutorials on deepnote, and there is a section of tutorials on Mathematical Programming. You might want to pay special attention to "Sum-of-squares optimization" as we will use it in this project.
