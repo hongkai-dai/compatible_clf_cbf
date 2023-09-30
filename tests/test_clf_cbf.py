@@ -8,27 +8,27 @@ import pydrake.symbolic as sym
 
 class TestClfCbf(object):
     @classmethod
-    def setup_class(self):
-        self.x = sym.MakeVectorContinuousVariable(3, "x")
+    def setup_class(cls):
+        cls.x = sym.MakeVectorContinuousVariable(3, "x")
         # The dynamics and unsafe regions are arbitrary, they are only used to
         # test the functionality of the code.
-        self.f = np.array(
+        cls.f = np.array(
             [
-                sym.Polynomial(self.x[0] * self.x[0]),
-                sym.Polynomial(self.x[1] * self.x[0]),
-                sym.Polynomial(self.x[0] + self.x[2]),
+                sym.Polynomial(cls.x[0] * cls.x[0]),
+                sym.Polynomial(cls.x[1] * cls.x[0]),
+                sym.Polynomial(cls.x[0] + cls.x[2]),
             ]
         )
-        self.g = np.array(
+        cls.g = np.array(
             [
-                [sym.Polynomial(self.x[0] + self.x[1]), sym.Polynomial()],
-                [sym.Polynomial(), sym.Polynomial(self.x[1] * self.x[2])],
-                [sym.Polynomial(self.x[0] + self.x[2]), sym.Polynomial(self.x[1])],
+                [sym.Polynomial(cls.x[0] + cls.x[1]), sym.Polynomial()],
+                [sym.Polynomial(), sym.Polynomial(cls.x[1] * cls.x[2])],
+                [sym.Polynomial(cls.x[0] + cls.x[2]), sym.Polynomial(cls.x[1])],
             ]
         )
-        self.unsafe_regions = [
-            np.array([sym.Polynomial(self.x[0] + 1)]),
-            np.array([sym.Polynomial(1 - self.x[1]), sym.Polynomial(1 - self.x[0])]),
+        cls.unsafe_regions = [
+            np.array([sym.Polynomial(cls.x[0] + 1)]),
+            np.array([sym.Polynomial(1 - cls.x[1]), sym.Polynomial(1 - cls.x[0])]),
         ]
 
     def test_constructor(self):
