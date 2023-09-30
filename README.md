@@ -34,3 +34,14 @@ export MOSEKLM_LICENSE_FILE=/path/to/mosek.lic
 
 ## Using Drake
 We formulate and solve the optimization problem using [Drake](https://drake.mit.edu). To get started with Drake, you can checkout its tutorials (on the Drake webpage, navigate to "Resources"->"Tutorials"). Drake hosts several tutorials on deepnote, and there is a section of tutorials on Mathematical Programming. You might want to pay special attention to "Sum-of-squares optimization" as we will use it in this project.
+
+# Contributing
+To maintain quality of the code, we suggest in each pull request, please do the followings
+- Add unit tests. We use [pytest](https://docs.pytest.org/en) framework.
+- Format the code. You can run 
+  ```
+  black ./
+  ```
+  to format each python code using `black` formatter.
+
+Each pull request need to pass the CI before being merged. We also use [reviewable](reviewable.io) to review the code.
