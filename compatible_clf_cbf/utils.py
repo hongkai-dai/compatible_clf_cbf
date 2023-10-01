@@ -15,3 +15,9 @@ def check_array_of_polynomials(p: np.ndarray, x_set: sym.Variables) -> None:
         assert isinstance(p_i, sym.Polynomial)
         if not p_i.indeterminates().IsSubsetOf(x_set):
             raise Exception(f"{p_i}'s indeterminates is not a subset of {x_set}")
+
+
+def check_polynomial_arrays_equal(p: np.ndarray, q: np.ndarray, tol: float):
+    assert p.shape == q.shape
+    for p_i, q_i in zip(p.flat, q.flat):
+        assert p_i.CoefficientsAlmostEqual(q_i, tol)

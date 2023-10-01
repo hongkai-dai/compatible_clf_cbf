@@ -1,7 +1,7 @@
 black
+drake
 flake8
 matplotlib
 numpy
-pydrake
 pytest
 scipy
