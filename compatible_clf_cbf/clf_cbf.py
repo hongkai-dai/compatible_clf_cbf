@@ -7,7 +7,7 @@ import numpy as np
 import pydrake.symbolic as sym
 import pydrake.solvers as solvers
 
-from compatible_clf_cbf.utils import check_array_of_polynomials
+from compatible_clf_cbf.utils import check_array_of_polynomials, get_polynomial_result
 
 
 @dataclass
@@ -20,6 +20,7 @@ class CompatibleLagrangians:
     # An array of symbolic polynomials. The Lagrangian multiplies with Λ(x)ᵀy if
     # use_y_squared = False, or Λ(x)ᵀy² if use_y_squared = True.
     # Each entry in this Lagrangian multiplier is a free polynomial.
+    # Size is (nu,)
     lambda_y: np.ndarray
     # The Lagrangian polynomial multiplies with ξ(x)ᵀy if use_y_squared = False,
     # or ξ(x)ᵀy² if use_y_squared = True. This multiplier is a free polynomial.
@@ -27,24 +28,71 @@ class CompatibleLagrangians:
     # The Lagrangian polynomial multiplies with y if use_y_squared = False.
     # This multiplier is an array of SOS polynomials.
     y: Optional[np.ndarray]
-    # The Lagrangian polynomial multiplies with ρ − V when with_clf = True,
-    # should be a SOS polynomial.
+    # The Lagrangian polynomial multiplies with ρ − V when with_clf = True, and
+    # we search for an CLF with a region-of-attraction {x | V(x) <= ρ}.
+    # Should be a SOS polynomial.
     rho_minus_V: Optional[sym.Polynomial]
     # The Lagrangian polynomials multiplies with b(x)+ε. Should be an array of SOS
     # polynomials.
     b_plus_eps: Optional[np.ndarray]
 
-    def get_result(self, result: solvers.MathematicalProgramResult) -> Self:
-        lambda_y_result = result.GetSolution(self.lambda_y)
-        xi_y_result = result.GetSolution(self.xi_y)
-        y_result = result.GetSolution(self.y) if self.y is not None else None
+    @classmethod
+    def reserve(
+        cls,
+        nu: int,
+        use_y_squared: bool,
+        y_size,
+        with_rho_minus_V: bool,
+        b_plus_eps_size: Optional[int],
+    ) -> Self:
+        """
+        Reserve the Lagrangian polynomials. Note that the polynomials are
+        initialized to 0, you should properly set their values.
+
+        Args:
+          nu: The dimension of control u.
+          use_y_squared: Check CompatibleClfCbf documentation.
+          y_size: The size of the indeterminates y.
+          with_rho_minus_V: Whether the psatz condition considers ρ - V.
+          b_plus_eps_size: The size of b(x)+ε. If set to None, then we don't consider
+          b(x)+ε in the psatz.
+        """
+        return CompatibleLagrangians(
+            lambda_y=np.array([sym.Polynomial() for _ in range(nu)]),
+            xi_y=sym.Polynomial(),
+            y=None
+            if use_y_squared
+            else np.array([sym.Polynomial() for _ in range(y_size)]),
+            rho_minus_V=sym.Polynomial() if with_rho_minus_V else None,
+            b_plus_eps=None
+            if b_plus_eps_size is None
+            else np.array([sym.Polynomial() for _ in range(b_plus_eps_size)]),
+        )
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        """
+        Gets the result of the Lagrangians.
+        """
+        lambda_y_result = get_polynomial_result(result, self.lambda_y, coefficient_tol)
+        xi_y_result = get_polynomial_result(result, self.xi_y, coefficient_tol)
+        y_result = (
+            get_polynomial_result(result, self.y, coefficient_tol)
+            if self.y is not None
+            else None
+        )
         rho_minus_V_result = (
-            result.GetSolution(self.rho_minus_V)
+            get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
             if self.rho_minus_V is not None
             else None
         )
         b_plus_eps_result = (
-            result.GetSolution(self.b_plus_eps) if self.b_plus_eps is not None else None
+            get_polynomial_result(result, self.b_plus_eps, coefficient_tol)
+            if self.b_plus_eps is not None
+            else None
         )
         return CompatibleLagrangians(
             lambda_y=lambda_y_result,
@@ -60,7 +108,7 @@ class CompatibleClfCbf:
     Certify and synthesize compatible Control Lyapunov Function (CLF) and
     Control Barrier Functions (CBFs).
 
-    For a continuous-time control affine system
+    For a continuous-time control-affine system
     ẋ = f(x)+g(x)u, u∈𝒰
     A CLF V(x) and a CBF b(x) is compatible if and only if
     ∃ u∈𝒰,      ∂b/∂x*f(x) + ∂b/∂x*g(x)*u ≥ −κ_b*b(x)
