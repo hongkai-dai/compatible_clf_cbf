@@ -21,3 +21,5 @@ jobs:
         run: flake8 ./
       - name: unit test
         run: pytest tests
+      - name: run linear_toy_demo
+        run: python examples/linear_toy/linear_toy_demo.py

@@ -1,6 +1,8 @@
 black
+black[jupyter]
 drake
 flake8
+ipykernel
 matplotlib
 numpy
 pytest
