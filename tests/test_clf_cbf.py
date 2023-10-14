@@ -219,9 +219,53 @@ class TestClfCbf(object):
             V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b
         )
         poly_expected = (
-            lagrangians.lambda_y.dot(lambda_mat.T @ dut.y_squared_poly)
-            + lagrangians.xi_y * (xi.dot(dut.y_squared_poly) + 1)
-            + lagrangians.rho_minus_V * (rho - V)
-            + lagrangians.b_plus_eps.dot(b + barrier_eps)
+            -1
+            - lagrangians.lambda_y.dot(lambda_mat.T @ dut.y_squared_poly)
+            - lagrangians.xi_y * (xi.dot(dut.y_squared_poly) + 1)
+            - lagrangians.rho_minus_V * (rho - V)
+            - lagrangians.b_plus_eps.dot(b + barrier_eps)
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, tolerance=1e-5)
+
+    def test_add_barrier_safe_constraint(self):
+        """
+        Test _add_barrier_safe_constraint
+        """
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=True,
+        )
+
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x)
+        prog.AddIndeterminates(dut.y)
+
+        b = np.array(
+            [
+                sym.Polynomial(1 + 2 * self.x[0] * self.x[1]),
+                sym.Polynomial(2 - self.x[0] ** 2),
+            ]
+        )
+        phi = [
+            np.array([sym.Polynomial(1 + self.x[0]), sym.Polynomial(2 + self.x[0])]),
+            np.array(
+                [
+                    sym.Polynomial(1 + self.x[0] * self.x[1]),
+                    sym.Polynomial(self.x[0] + self.x[1]),
+                    sym.Polynomial(self.x[1] ** 2 + self.x[0]),
+                ]
+            ),
+        ]
+        poly = dut._add_barrier_safe_constraint(prog, b, phi)
+        assert poly.shape == (len(dut.unsafe_regions),)
+        for i in range(len(dut.unsafe_regions)):
+            poly_i_expected = (
+                -1 - phi[i][0] * b[i] + phi[i][1:].dot(dut.unsafe_regions[i])
+            )
+            assert poly[i].CoefficientsAlmostEqual(poly_i_expected, 1e-8)

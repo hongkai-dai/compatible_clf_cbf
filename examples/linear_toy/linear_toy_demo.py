@@ -29,7 +29,7 @@ def main():
     alpha = 0.5
     unsafe_regions = [np.array([0.9 * alpha - sym.Polynomial(x.dot(S_lqr @ x))])]
 
-    use_y_squared = False
+    use_y_squared = True
 
     dut = clf_cbf.CompatibleClfCbf(
         f=f,
@@ -77,10 +77,8 @@ def main():
     result = pydrake.solvers.Solve(prog)
     assert result.is_success()
     lagrangians_result = lagrangians.get_result(result, coefficient_tol=1e-8)
-    print(f"lambda_y lagrangian\n{lagrangians_result.lambda_y}")
-    print(f"xi_y lagrangian\n{lagrangians_result.xi_y}")
-    if not use_y_squared:
-        print(f"y lagrangian\n{lagrangians_result.y}")
+    # The Lagrangians are not 0
+    assert not lagrangians_result.xi_y.EqualTo(sym.Polynomial())
 
 
 if __name__ == "__main__":
