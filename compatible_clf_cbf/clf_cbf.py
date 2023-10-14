@@ -291,11 +291,11 @@ class CompatibleClfCbf:
         ξ(x) = [ ∂b/∂x*f(x)+κ_b*b(x)]
                [-∂V/∂x*f(x)-κ_V*V(x)]
         To certify the emptiness of the set in (1), we can use the sufficient condition
-        s₀(x, y)ᵀ Λ(x)ᵀy + s₁(x, y)(ξ(x)ᵀy+1) + s₂(x, y)ᵀy + s₃(x, y)(ρ − V) + s₄(x, y)ᵀ(b(x)+ε) = -1          (3)
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy - s₁(x, y)(ξ(x)ᵀy+1) - s₂(x, y)ᵀy - s₃(x, y)(ρ − V) - s₄(x, y)ᵀ(b(x)+ε) is sos          (3)
         s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
 
         To certify the emptiness of the set in (2), we can use the sufficient condition
-        s₀(x, y)ᵀ Λ(x)ᵀy² + s₁(x, y)(ξ(x)ᵀy²+1) + s₃(x, y)(ρ − V) + s₄(x, y)ᵀ(b(x)+ε) = -1                     (4)
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(ρ − V) - s₄(x, y)ᵀ(b(x)+ε) is sos                     (4)
         s₃(x, y), s₄(x, y) are all sos.
 
         Note that we do NOT add the constraint
@@ -308,38 +308,74 @@ class CompatibleClfCbf:
         xi, lambda_mat = self._calc_xi_Lambda(
             V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b
         )
-        poly = sym.Polynomial()
+        poly_one = sym.Polynomial(sym.Monomial())
+
+        poly = -poly_one
         # Compute s₀(x, y)ᵀ Λ(x)ᵀy
         if self.use_y_squared:
             lambda_y = lambda_mat.T @ self.y_squared_poly
         else:
             lambda_y = lambda_mat.T @ self.y_poly
-        poly += lagrangians.lambda_y.dot(lambda_y)
+        poly -= lagrangians.lambda_y.dot(lambda_y)
 
         # Compute s₁(x, y)(ξ(x)ᵀy+1)
         # This is just polynomial 1.
-        poly_one = sym.Polynomial(sym.Monomial())
         if self.use_y_squared:
             xi_y = xi.dot(self.y_squared_poly) + poly_one
         else:
             xi_y = xi.dot(self.y_poly) + poly_one
-        poly += lagrangians.xi_y * xi_y
+        poly -= lagrangians.xi_y * xi_y
 
         # Compute s₂(x, y)ᵀy
         if not self.use_y_squared:
             assert lagrangians.y is not None
-            poly += lagrangians.y.dot(self.y_poly)
+            poly -= lagrangians.y.dot(self.y_poly)
 
         # Compute s₃(x, y)(ρ − V)
         if rho is not None and self.with_clf:
             assert V is not None
             assert lagrangians.rho_minus_V is not None
-            poly += lagrangians.rho_minus_V * (rho * poly_one - V)
+            poly -= lagrangians.rho_minus_V * (rho * poly_one - V)
 
         # Compute s₄(x, y)ᵀ(b(x)+ε)
         if barrier_eps is not None:
             assert lagrangians.b_plus_eps is not None
-            poly += lagrangians.b_plus_eps.dot(barrier_eps + b)
+            poly -= lagrangians.b_plus_eps.dot(barrier_eps + b)
 
-        prog.AddEqualityConstraintBetweenPolynomials(poly, -poly_one)
+        prog.AddSosConstraint(poly)
+        return poly
+
+    def _add_barrier_safe_constraint(
+        self, prog: solvers.MathematicalProgram, b: np.ndarray, phi: List[np.ndarray]
+    ) -> np.ndarray:
+        """
+        Adds the constraint that the 0-superlevel set of the barrier function
+        does not intersect with the unsafe region.
+        Since the i'th unsafe regions is defined as the 0-sublevel set of
+        polynomials p(x), we want to certify that the set {x|p(x)≤0, bᵢ(x)≥0}
+        is empty.
+        The emptiness of the set can be certified by the constraint
+        -1-ϕᵢ,₀(x)bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
+
+        Note that this function only adds the constraint
+        -1-ϕᵢ,₀(x)bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        It doesn't add the constraint ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
+
+        Args:
+          b: An array of polynomials, b[i] is the barrier function for the i'th
+            unsafe region.
+          phi: A array of polynomials, ϕ(x) in the documentation above. phi[i]
+            are the Lagrangian multipliers for the i'th unsafe region.
+        Returns:
+          poly: poly[i] is the polynomial -1-ϕᵢ,₀(x)bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
+        """
+        num_unsafe_regions = len(self.unsafe_regions)
+        assert b.shape == (num_unsafe_regions,)
+        assert len(phi) == num_unsafe_regions
+        poly = np.empty((num_unsafe_regions,), dtype=object)
+        for i in range(num_unsafe_regions):
+            assert phi[i].shape == (1 + len(self.unsafe_regions[i]),)
+            poly[i] = -1 - phi[i][0] * b[i] + phi[i][1:].dot(self.unsafe_regions[i])
+            prog.AddSosConstraint(poly[i])
         return poly
