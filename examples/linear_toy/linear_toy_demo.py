@@ -1,3 +1,6 @@
+"""
+We search for compatible CLF and CBF for a 2D linear system.
+"""
 import compatible_clf_cbf.clf_cbf as clf_cbf
 import numpy as np
 
@@ -6,7 +9,7 @@ import pydrake.solvers
 import pydrake.symbolic as sym
 
 
-def main():
+def search(use_y_squared: bool):
     A = np.array([[1, 2], [-2, 3.0]])
     B = np.array([[1, 0], [0, 1.0]])
 
@@ -28,8 +31,6 @@ def main():
     # Use an arbitrary unsafe region
     alpha = 0.5
     unsafe_regions = [np.array([0.9 * alpha - sym.Polynomial(x.dot(S_lqr @ x))])]
-
-    use_y_squared = True
 
     dut = clf_cbf.CompatibleClfCbf(
         f=f,
@@ -79,6 +80,11 @@ def main():
     lagrangians_result = lagrangians.get_result(result, coefficient_tol=1e-8)
     # The Lagrangians are not 0
     assert not lagrangians_result.xi_y.EqualTo(sym.Polynomial())
+
+
+def main():
+    search(use_y_squared=True)
+    search(use_y_squared=False)
 
 
 if __name__ == "__main__":
