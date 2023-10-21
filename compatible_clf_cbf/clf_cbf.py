@@ -346,7 +346,10 @@ class CompatibleClfCbf:
         return poly
 
     def _add_barrier_safe_constraint(
-        self, prog: solvers.MathematicalProgram, b: np.ndarray, phi: List[np.ndarray]
+        self,
+        prog: solvers.MathematicalProgram,
+        b: np.ndarray,
+        lagrangians: List[np.ndarray],
     ) -> np.ndarray:
         """
         Adds the constraint that the 0-superlevel set of the barrier function
@@ -365,17 +368,21 @@ class CompatibleClfCbf:
         Args:
           b: An array of polynomials, b[i] is the barrier function for the i'th
             unsafe region.
-          phi: A array of polynomials, ϕ(x) in the documentation above. phi[i]
-            are the Lagrangian multipliers for the i'th unsafe region.
+          lagrangians: A array of polynomials, ϕ(x) in the documentation above.
+          lagrangians[i] are the Lagrangian multipliers for the i'th unsafe region.
         Returns:
           poly: poly[i] is the polynomial -1-ϕᵢ,₀(x)bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
         """
         num_unsafe_regions = len(self.unsafe_regions)
         assert b.shape == (num_unsafe_regions,)
-        assert len(phi) == num_unsafe_regions
+        assert len(lagrangians) == num_unsafe_regions
         poly = np.empty((num_unsafe_regions,), dtype=object)
         for i in range(num_unsafe_regions):
-            assert phi[i].shape == (1 + len(self.unsafe_regions[i]),)
-            poly[i] = -1 - phi[i][0] * b[i] + phi[i][1:].dot(self.unsafe_regions[i])
+            assert lagrangians[i].shape == (1 + len(self.unsafe_regions[i]),)
+            poly[i] = (
+                -1
+                - lagrangians[i][0] * b[i]
+                + lagrangians[i][1:].dot(self.unsafe_regions[i])
+            )
             prog.AddSosConstraint(poly[i])
         return poly
