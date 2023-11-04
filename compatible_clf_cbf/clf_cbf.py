@@ -103,6 +103,36 @@ class CompatibleLagrangians:
         )
 
 
+@dataclass
+class UnsafeRegionLagrangians:
+    """
+    The Lagrangians for certifying that the 0-super level set of a CBF doesn't
+    intersect with an unsafe region.
+
+    For a CBF function bᵢ(x), to prove that the 0-super level set
+    {x |bᵢ(x) >= 0} doesn't intersect with an unsafe set
+    {x | pⱼ(x) <= 0 for all j}, we impose the condition:
+
+    -(1+ϕᵢ,₀(x))*bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+    ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
+    """
+
+    # The Lagrangian that multiplies with CBF function.
+    # ϕᵢ,₀(x) in the documentation above.
+    cbf: sym.Polynomial
+    # An array of sym.Polynomial. The Lagrangians that multiply the unsafe region
+    # polynomials. ϕᵢ,ⱼ(x) in the documentation above.
+    unsafe_region: np.ndarray
+
+    def get_result(self, result: solvers.MathematicalProgramResult) -> Self:
+        return UnsafeRegionLagrangians(
+            cbf=result.GetSolution(self.cbf),
+            unsafe_region=np.array(
+                [result.GetSolution(phi) for phi in self.unsafe_region]
+            ),
+        )
+
+
 class CompatibleClfCbf:
     """
     Certify and synthesize compatible Control Lyapunov Function (CLF) and
@@ -212,6 +242,50 @@ class CompatibleClfCbf:
         self.y_squared_poly = np.array(
             [sym.Polynomial(sym.Monomial(self.y[i], 2)) for i in range(y_size)]
         )
+
+    def certify_cbf_unsafe_region(
+        self,
+        unsafe_region_index: int,
+        cbf: sym.Polynomial,
+        cbf_lagrangian_degree: int,
+        unsafe_region_lagrangian_degrees: List[int],
+        solver_options: Optional[solvers.SolverOptions] = None,
+    ) -> UnsafeRegionLagrangians:
+        """
+        Certifies that the 0-superlevel set {x | bᵢ(x) >= 0} does not intersect
+        with the unsafe region self.unsafe_regions[unsafe_region_index].
+
+        If we denote the unsafe region as {x | q(x) <= 0}, then we impose the constraint
+
+        We impose the constraint
+        -(1+ϕᵢ,₀(x))*bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
+
+        Args:
+          unsafe_region_index: We certify the CBF for the region
+            self.unsafe_regions[unsafe_region_index]
+          cbf: bᵢ(x) in the documentation above. The CBF function for
+            self.unsafe_regions[unsafe_region_index]
+          cbf_lagrangian_degree: The degree of the polynomial ϕᵢ,₀(x).
+          unsafe_region_lagrangian_degrees: unsafe_region_lagrangian_degrees[j]
+          is the degree of the polynomial ϕᵢ,ⱼ₊₁(x)
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        cbf_lagrangian, cbf_lagrangian_gram = prog.NewSosPolynomial(
+            self.x_set, cbf_lagrangian_degree
+        )
+        unsafe_lagrangians = np.array(
+            [
+                prog.NewSosPolynomial(self.x_set, deg)[0]
+                for deg in unsafe_region_lagrangian_degrees
+            ]
+        )
+        lagrangians = UnsafeRegionLagrangians(cbf_lagrangian, unsafe_lagrangians)
+        self._add_barrier_safe_constraint(prog, unsafe_region_index, cbf, lagrangians)
+        result = solvers.Solve(prog, None, solver_options)
+        assert result.is_success()
+        return lagrangians.get_result(result)
 
     def _calc_xi_Lambda(
         self,
@@ -346,8 +420,12 @@ class CompatibleClfCbf:
         return poly
 
     def _add_barrier_safe_constraint(
-        self, prog: solvers.MathematicalProgram, b: np.ndarray, phi: List[np.ndarray]
-    ) -> np.ndarray:
+        self,
+        prog: solvers.MathematicalProgram,
+        unsafe_region_index: int,
+        b: sym.Polynomial,
+        lagrangians: UnsafeRegionLagrangians,
+    ) -> sym.Polynomial:
         """
         Adds the constraint that the 0-superlevel set of the barrier function
         does not intersect with the unsafe region.
@@ -355,27 +433,28 @@ class CompatibleClfCbf:
         polynomials p(x), we want to certify that the set {x|p(x)≤0, bᵢ(x)≥0}
         is empty.
         The emptiness of the set can be certified by the constraint
-        -1-ϕᵢ,₀(x)bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        -(1+ϕᵢ,₀(x))bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
         ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
 
         Note that this function only adds the constraint
-        -1-ϕᵢ,₀(x)bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        -(1+ϕᵢ,₀(x))*bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
         It doesn't add the constraint ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
 
         Args:
-          b: An array of polynomials, b[i] is the barrier function for the i'th
-            unsafe region.
-          phi: A array of polynomials, ϕ(x) in the documentation above. phi[i]
-            are the Lagrangian multipliers for the i'th unsafe region.
+          unsafe_region_index: We certify that the 0-superlevel set of the
+            barrier function doesn't intersect with the unsafe region
+            self.unsafe_regions[unsafe_region_index]
+          b: a polynomial, b is the barrier function for the
+            unsafe region self.unsafe_regions[unsafe_region_index].
+          lagrangians: A array of polynomials, ϕᵢ(x) in the documentation above.
         Returns:
-          poly: poly[i] is the polynomial -1-ϕᵢ,₀(x)bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
+          poly: poly is the polynomial -1-ϕᵢ,₀(x)bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
         """
-        num_unsafe_regions = len(self.unsafe_regions)
-        assert b.shape == (num_unsafe_regions,)
-        assert len(phi) == num_unsafe_regions
-        poly = np.empty((num_unsafe_regions,), dtype=object)
-        for i in range(num_unsafe_regions):
-            assert phi[i].shape == (1 + len(self.unsafe_regions[i]),)
-            poly[i] = -1 - phi[i][0] * b[i] + phi[i][1:].dot(self.unsafe_regions[i])
-            prog.AddSosConstraint(poly[i])
+        assert lagrangians.unsafe_region.size == len(
+            self.unsafe_regions[unsafe_region_index]
+        )
+        poly = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
+            self.unsafe_regions[unsafe_region_index]
+        )
+        prog.AddSosConstraint(poly)
         return poly

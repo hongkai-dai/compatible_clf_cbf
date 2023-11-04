@@ -9,8 +9,7 @@ import pydrake.systems.controllers
 import pydrake.solvers
 import pydrake.symbolic as sym
 
-import compatible_clf_cbf.clf_cbf as clf_cbf
-import compatible_clf_cbf.utils as utils
+from compatible_clf_cbf import clf_cbf
 
 
 def search_compatible_lagrangians(
@@ -59,20 +58,9 @@ def search_compatible_lagrangians(
 
 def search_barrier_safe_lagrangians(
     dut: clf_cbf.CompatibleClfCbf, b: np.ndarray
-) -> List[np.ndarray]:
-    prog = pydrake.solvers.MathematicalProgram()
-    prog.AddIndeterminates(dut.x)
-    phi = [np.empty((2,), dtype=object)]
-    phi[0][0] = prog.NewSosPolynomial(dut.x_set, degree=2)[0]
-    phi[0][1] = prog.NewSosPolynomial(dut.x_set, degree=2)[0]
-    dut._add_barrier_safe_constraint(prog, b, phi)
-    result = pydrake.solvers.Solve(prog)
-    assert result.is_success()
-    phi_sol = [
-        utils.get_polynomial_result(result, phi_i, coefficient_tol=1e-7)
-        for phi_i in phi
-    ]
-    return phi_sol
+) -> List[clf_cbf.UnsafeRegionLagrangians]:
+    lagrangians = dut.certify_cbf_unsafe_region(0, b[0], 2, [2])
+    return [lagrangians]
 
 
 def search_lagrangians(

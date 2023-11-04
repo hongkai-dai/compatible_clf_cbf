@@ -54,3 +54,11 @@ def get_polynomial_result(
                 ]
             ).reshape(p.shape)
         return p_result
+
+
+def is_sos(p: sym.Polynomial) -> bool:
+    prog = solvers.MathematicalProgram()
+    prog.AddIndeterminates(p.indeterminates())
+    prog.AddSosConstraint(p)
+    result = solvers.Solve(prog)
+    return result.is_success()
