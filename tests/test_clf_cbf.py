@@ -244,28 +244,38 @@ class TestClfCbf(object):
 
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x)
-        prog.AddIndeterminates(dut.y)
 
-        b = np.array(
-            [
-                sym.Polynomial(1 + 2 * self.x[0] * self.x[1]),
-                sym.Polynomial(2 - self.x[0] ** 2),
-            ]
+        unsafe_region_index = 0
+        b = sym.Polynomial(1 + 2 * self.x[0] * self.x[1])
+        lagrangians = mut.UnsafeRegionLagrangians(
+            cbf=sym.Polynomial(1 + self.x[0]),
+            unsafe_region=np.array([sym.Polynomial(2 + self.x[0])]),
         )
-        phi = [
-            np.array([sym.Polynomial(1 + self.x[0]), sym.Polynomial(2 + self.x[0])]),
-            np.array(
-                [
-                    sym.Polynomial(1 + self.x[0] * self.x[1]),
-                    sym.Polynomial(self.x[0] + self.x[1]),
-                    sym.Polynomial(self.x[1] ** 2 + self.x[0]),
-                ]
-            ),
-        ]
-        poly = dut._add_barrier_safe_constraint(prog, b, phi)
-        assert poly.shape == (len(dut.unsafe_regions),)
-        for i in range(len(dut.unsafe_regions)):
-            poly_i_expected = (
-                -1 - phi[i][0] * b[i] + phi[i][1:].dot(dut.unsafe_regions[i])
-            )
-            assert poly[i].CoefficientsAlmostEqual(poly_i_expected, 1e-8)
+
+        poly = dut._add_barrier_safe_constraint(
+            prog, unsafe_region_index, b, lagrangians
+        )
+        poly_expected = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
+            dut.unsafe_regions[unsafe_region_index]
+        )
+        assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
+
+    def test_certify_cbf_unsafe_region(self):
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=True,
+        )
+
+        cbf = sym.Polynomial(1 - self.x.dot(self.x))
+        lagrangians = dut.certify_cbf_unsafe_region(
+            0, cbf, cbf_lagrangian_degree=2, unsafe_region_lagrangian_degrees=[2]
+        )
+        assert utils.is_sos(lagrangians.cbf)
+        for i in range(dut.unsafe_regions[0].size):
+            assert utils.is_sos(lagrangians.unsafe_region[i])
