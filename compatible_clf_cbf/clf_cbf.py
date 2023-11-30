@@ -104,6 +104,92 @@ class CompatibleLagrangians:
 
 
 @dataclass
+class CompatibleLagrangianDegrees:
+    """
+    The degree of the Lagrangian multipliers in CompatibleLagrangians.
+    """
+
+    @dataclass
+    class Degree:
+        """
+        The degree of each Lagrangian polynomial in indeterminates x and y. For
+        example, if we have a polynomial x₀²x₁y₂ + 3x₀y₁y₂³, its degree in x is
+        3 (from x₀²x₁), and its degree in y is 4 (from y₁y₂³)
+        """
+
+        x: int
+        y: int
+
+        def construct_polynomial(
+            self,
+            prog: solvers.MathematicalProgram,
+            x: sym.Variables,
+            y: sym.Variables,
+            is_sos: bool,
+        ) -> sym.Polynomial:
+            """
+            Args:
+              is_sos: whether the constructed polynomial is sos or not.
+            """
+            if is_sos:
+                basis = sym.MonomialBasis(
+                    {x: int(np.floor(self.x / 2)), y: int(np.floor(self.y / 2))}
+                )
+                poly, _ = prog.NewSosPolynomial(basis)
+            else:
+                basis = sym.MonomialBasis({x: self.x, y: self.y})
+                coeffs = prog.NewContinuousVariables(basis.size)
+                poly = sym.Polynomial({basis[i]: coeffs[i] for i in range(basis.size)})
+            return poly
+
+    lambda_y: List[Degree]
+    xi_y: Degree
+    y: Optional[List[Degree]]
+    rho_minus_V: Optional[Degree]
+    b_plus_eps: Optional[List[Degree]]
+
+    def initialize_lagrangians(
+        self, prog: solvers.MathematicalProgram, x: sym.Variables, y: sym.Variables
+    ) -> CompatibleLagrangians:
+        lambda_y = np.array(
+            [
+                lambda_y_i.construct_polynomial(prog, x, y, is_sos=False)
+                for lambda_y_i in self.lambda_y
+            ]
+        )
+        xi_y = self.xi_y.construct_polynomial(prog, x, y, is_sos=False)
+        y_lagrangian = (
+            None
+            if self.y is None
+            else np.array(
+                [y_i.construct_polynomial(prog, x, y, is_sos=True) for y_i in self.y]
+            )
+        )
+        rho_minus_V = (
+            None
+            if self.rho_minus_V is None
+            else self.rho_minus_V.construct_polynomial(prog, x, y, is_sos=True)
+        )
+        b_plus_eps = (
+            None
+            if self.b_plus_eps is None
+            else np.array(
+                [
+                    b_plus_eps_i.construct_polynomial(prog, x, y, is_sos=True)
+                    for b_plus_eps_i in self.b_plus_eps
+                ]
+            )
+        )
+        return CompatibleLagrangians(
+            lambda_y=lambda_y,
+            xi_y=xi_y,
+            y=y_lagrangian,
+            rho_minus_V=rho_minus_V,
+            b_plus_eps=b_plus_eps,
+        )
+
+
+@dataclass
 class UnsafeRegionLagrangians:
     """
     The Lagrangians for certifying that the 0-super level set of a CBF doesn't
@@ -286,6 +372,53 @@ class CompatibleClfCbf:
         result = solvers.Solve(prog, None, solver_options)
         assert result.is_success()
         return lagrangians.get_result(result)
+
+    def construct_search_compatible_lagrangians(
+        self,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        lagrangian_degrees: CompatibleLagrangianDegrees,
+        rho: Optional[float],
+        barrier_eps: Optional[np.ndarray],
+    ) -> Tuple[solvers.MathematicalProgram, CompatibleLagrangians]:
+        """
+        Given CLF candidate V and CBF candidate b, construct the optimization
+        program to certify that they are compatible within the region
+        {x | V(x) <= rho} ∩ {x | b(x) >= -eps}.
+
+        Args:
+          V: The CLF candidate. If empty, then we will certify that the multiple
+            barrier functions are compatible.
+          b: The CBF candidates.
+          kappa_V: The exponential decay rate for CLF. Namely we want V̇ ≤ −κ_V*V
+          kappa_b: The exponential rate for CBF, namely we want ḃ ≥ −κ_b*b
+          lagrangian_degrees: The degrees for the Lagrangian polynomials.
+          rho: The certified inner approximation of ROA is {x | V(x) <= rho}
+          barrier_eps: The certified safe region is {x | b(x) >= -eps}
+          coefficient_tol: In the Lagrangian polynomials, we will remove the
+            coefficients no larger than this tolerance.
+        Returns:
+          result: The result for solving the optimization program.
+          lagrangian_result: The result of the Lagrangian polynomials.
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.xy_set)
+        lagrangians = lagrangian_degrees.initialize_lagrangians(
+            prog, self.x_set, self.y_set
+        )
+        self._add_compatibility(
+            prog=prog,
+            V=V,
+            b=b,
+            kappa_V=kappa_V,
+            kappa_b=kappa_b,
+            lagrangians=lagrangians,
+            rho=rho,
+            barrier_eps=barrier_eps,
+        )
+        return (prog, lagrangians)
 
     def _calc_xi_Lambda(
         self,

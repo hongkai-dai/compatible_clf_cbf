@@ -9,6 +9,31 @@ import pydrake.symbolic as sym
 import compatible_clf_cbf.utils as utils
 
 
+class TestCompatibleLagrangianDegrees(object):
+    def test_construct_polynomial(self):
+        degree = mut.CompatibleLagrangianDegrees.Degree(x=3, y=2)
+        prog = solvers.MathematicalProgram()
+        x = prog.NewIndeterminates(3, "x")
+        y = prog.NewIndeterminates(2, "y")
+
+        sos_poly = degree.construct_polynomial(
+            prog, sym.Variables(x), sym.Variables(y), is_sos=True
+        )
+        assert len(prog.positive_semidefinite_constraints()) == 1
+        free_poly = degree.construct_polynomial(
+            prog, sym.Variables(x), sym.Variables(y), is_sos=False
+        )
+        assert len(prog.positive_semidefinite_constraints()) == 1
+        for monomial, _ in sos_poly.monomial_to_coefficient_map().items():
+            # The total degree for x should be <= 2 (the largest even degree <= 3).
+            assert np.sum([monomial.degree(x[i]) for i in range(x.size)]) <= 2
+            assert np.sum([monomial.degree(y[i]) for i in range(y.size)]) <= 2
+        for monomial, _ in free_poly.monomial_to_coefficient_map().items():
+            # The total degree for x should be <= 3
+            assert np.sum([monomial.degree(x[i]) for i in range(x.size)]) <= 3
+            assert np.sum([monomial.degree(y[i]) for i in range(y.size)]) <= 2
+
+
 class TestClfCbf(object):
     @classmethod
     def setup_class(cls):
@@ -154,6 +179,48 @@ class TestClfCbf(object):
         lambda_mat_expected = -dbdx @ self.g
         utils.check_polynomial_arrays_equal(lambda_mat, lambda_mat_expected, 1e-8)
 
+    def test_search_compatible_lagrangians_w_clf_y_squared(self):
+        """
+        Test search_compatible_lagrangians with CLF and use_y_squared=True
+        """
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=True,
+        )
+        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2)
+        b = np.array(
+            [
+                sym.Polynomial(1 - dut.x[0] ** 2 - dut.x[1] ** 2),
+                sym.Polynomial(2 - dut.x[0] ** 2 - dut.x[2] ** 2),
+            ]
+        )
+        kappa_V = 0.01
+        kappa_b = np.array([0.02, 0.03])
+        lagrangian_degrees = mut.CompatibleLagrangianDegrees(
+            lambda_y=[
+                mut.CompatibleLagrangianDegrees.Degree(x=2, y=2) for _ in range(self.nu)
+            ],
+            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+            y=None,
+            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+            b_plus_eps=[
+                mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)
+                for _ in range(len(self.unsafe_regions))
+            ],
+        )
+        rho = 0.1
+        barrier_eps = np.array([0.01, 0.02])
+
+        prog, lagrangians = dut.construct_search_compatible_lagrangians(
+            V, b, kappa_V, kappa_b, lagrangian_degrees, rho, barrier_eps
+        )
+
     def test_add_compatibility_w_clf_y_squared(self):
         """
         Test _add_compatibility with CLF and use_y_squared=True
@@ -171,7 +238,6 @@ class TestClfCbf(object):
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(dut.xy_set)
 
-        V = prog.NewFreePolynomial(dut.x_set, deg=2)
         V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2)
         b = np.array(
             [

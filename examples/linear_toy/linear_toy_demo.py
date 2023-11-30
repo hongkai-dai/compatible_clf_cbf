@@ -22,32 +22,21 @@ def search_compatible_lagrangians(
     y_size = dut.y.size
 
     # Search for the
-    lagrangians = clf_cbf.CompatibleLagrangians.reserve(
-        nu=2,
-        use_y_squared=dut.use_y_squared,
-        y_size=y_size,
-        with_rho_minus_V=False,
-        b_plus_eps_size=None,
+    lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
+        lambda_y=[
+            clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(dut.nx)
+        ],
+        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+        y=None
+        if dut.use_y_squared
+        else [
+            clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(y_size)
+        ],
+        rho_minus_V=None,
+        b_plus_eps=None,
     )
-    prog = pydrake.solvers.MathematicalProgram()
-    prog.AddIndeterminates(dut.x)
-    prog.AddIndeterminates(dut.y)
-    lagrangians.lambda_y[0] = prog.NewFreePolynomial(dut.xy_set, deg=4)
-    lagrangians.lambda_y[1] = prog.NewFreePolynomial(dut.xy_set, deg=4)
-    lagrangians.xi_y = prog.NewFreePolynomial(dut.xy_set, deg=4)
-    if not dut.use_y_squared:
-        for i in range(y_size):
-            lagrangians.y[i] = prog.NewSosPolynomial(dut.xy_set, degree=2)[0]
-
-    dut._add_compatibility(
-        prog=prog,
-        V=V,
-        b=b,
-        kappa_V=kappa_V,
-        kappa_b=kappa_b,
-        lagrangians=lagrangians,
-        rho=None,
-        barrier_eps=None,
+    prog, lagrangians = dut.construct_search_compatible_lagrangians(
+        V, b, kappa_V, kappa_b, lagrangian_degrees, rho=None, barrier_eps=None
     )
 
     result = pydrake.solvers.Solve(prog)
