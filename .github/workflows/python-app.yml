@@ -23,3 +23,5 @@ jobs:
         run: pytest tests
       - name: run linear_toy_demo
         run: python examples/linear_toy/linear_toy_demo.py
+      - name: run nonlinear_toy_demo
+        run: python examples/nonlinear_toy/wo_input_limits_demo.py
