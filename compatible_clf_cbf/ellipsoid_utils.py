@@ -7,6 +7,8 @@ import numpy as np
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 
+import compatible_clf_cbf.utils as utils
+
 
 def add_max_volume_linear_cost(
     prog: solvers.MathematicalProgram,
@@ -65,3 +67,42 @@ def add_max_volume_linear_cost(
     )
     cost = prog.AddLinearCost(-cost_expr)
     return cost
+
+
+def add_minimize_ellipsoid_volume(
+    prog: solvers.MathematicalProgram, S: np.ndarray, b: np.ndarray, c: sym.Variable
+) -> sym.Variable:
+    """
+    Minimize the volume of the ellipsoid {x | xᵀSx + bᵀx + c ≤ 0}
+    where S, b, and c are decision variables.
+
+    See doc/minimize_ellipsoid_volume.md for the details (you will need to
+    enable MathJax in your markdown viewer).
+
+    We minimize the volume through the convex program
+    min r
+    s.t ⌈c+r  bᵀ/2⌉ is psd
+        ⌊b/2     S⌋
+
+        log det(S) >= 0
+
+    Args:
+      S: a symmetric matrix of decision variables. S must have been registered
+      in `prog` already. It is the user's responsibility to impose "S is psd".
+      b: a vector of decision variables. b must have been registered in `prog` already.
+      c: a symbolic Variable. c must have been registered in `prog` already.
+    Returns:
+      r: The slack decision variable.
+    """
+    x_dim = S.shape[0]
+    assert S.shape == (x_dim, x_dim)
+    r = prog.NewContinuousVariables(1, "r")[0]
+    prog.AddLinearCost(r)
+    psd_mat = np.empty((x_dim + 1, x_dim + 1), dtype=object)
+    psd_mat[0, 0] = c + r
+    psd_mat[0, 1:] = b.T / 2
+    psd_mat[1:, 0] = b / 2
+    psd_mat[1:, 1:] = S
+    prog.AddPositiveSemidefiniteConstraint(psd_mat)
+    utils.add_log_det_lower(prog, S, lower=0.0)
+    return r
