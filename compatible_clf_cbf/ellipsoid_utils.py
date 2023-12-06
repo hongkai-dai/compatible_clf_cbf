@@ -2,6 +2,8 @@
 The utility function for manipulating ellipsoids
 """
 
+from typing import Tuple
+
 import numpy as np
 
 import pydrake.solvers as solvers
@@ -67,6 +69,75 @@ def add_max_volume_linear_cost(
     )
     cost = prog.AddLinearCost(-cost_expr)
     return cost
+
+
+def maximize_inner_ellipsoid_sequentially(
+    prog: solvers.MathematicalProgram,
+    S: np.ndarray,
+    b: np.ndarray,
+    c: sym.Variable,
+    S_init: np.ndarray,
+    b_init: np.ndarray,
+    c_init: float,
+    max_iter: int = 10,
+    convergence_tol: float = 1e-3,
+) -> Tuple[np.ndarray, np.ndarray, float]:
+    """
+    Maximize the inner ellipsoid ℰ={x | xᵀSx+bᵀx+c≤0} through a sequence of
+    convex programs.
+
+    Args:
+      prog: The optimization program that already contains all the constraints
+        that the ellipsoid is inside the set.
+      S: A symmetric matrix of decision variables. S must have been registered
+        in `prog` already.
+      b: A vector of decision variables. b must have been registered in `prog`
+        already.
+      c: A decision variable. c must have been registered in `prog` already.
+      S_init: A symmetric matrix of floats, the initial guess of S.
+      b_init: A vector of floats, the initial guess of b.
+      c_init: A float, the initial guess of c.
+    """
+    S_bar = S_init
+    b_bar = b_init
+    c_bar = c_init
+
+    def volume(S: np.ndarray, b: np.ndarray, c: float) -> float:
+        n = S.shape[0]
+        return (b.dot(np.linalg.solve(S, b)) / 4 - c) ** (n / 2) / np.sqrt(
+            np.linalg.det(S)
+        )
+
+    cost = None
+    volume_prev = volume(S_init, b_init, c_init)
+    assert max_iter >= 1
+    for i in range(max_iter):
+        if cost is not None:
+            prog.RemoveCost(cost)
+        cost = add_max_volume_linear_cost(prog, S, b, c, S_bar, b_bar, c_bar)
+        # The center of the ellipsoid {x | xᵀS_bar*x+b_barᵀx+c_bar≤0}
+        ellipsoid_center = -np.linalg.solve(S_bar, b_bar) / 2
+        # To constrain that {x | xᵀSx+bᵀx+c≤0} is a valid ellipsoid, we want it
+        # to contain at least one point. We choose that contained point to be
+        # ellipsoid_center.
+        prog.AddLinearConstraint(
+            ellipsoid_center.dot(S @ ellipsoid_center) + np.dot(b, ellipsoid_center) + c
+            <= 0
+        )
+        result = solvers.Solve(prog)
+        assert result.is_success()
+        S_result = result.GetSolution(S)
+        b_result = result.GetSolution(b)
+        c_result = result.GetSolution(c)
+        volume_result = volume(S_result, b_result, c_result)
+        if volume_result - volume_prev <= convergence_tol:
+            break
+        else:
+            volume_prev = volume_result
+            S_bar = S_result
+            b_bar = b_result
+            c_bar = c_result
+    return S_result, b_result, c_result
 
 
 def add_minimize_ellipsoid_volume(
