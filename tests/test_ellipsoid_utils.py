@@ -7,6 +7,7 @@ import pytest  # noqa
 
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
+import pydrake.math
 
 
 def eval_max_volume_cost(S: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray):
@@ -168,4 +169,85 @@ def test_add_minimize_ellipsoid_volume():
     check_outer_ellipsoid(S_inner=np.eye(2), b_inner=np.array([1, 2]), c_inner=-1)
     check_outer_ellipsoid(
         S_inner=np.array([[1, 2], [2, 9]]), b_inner=np.array([1, 2]), c_inner=-1
+    )
+
+
+def check_maximize_inner_ellipsoid_sequentially(
+    box_size: np.ndarray, box_center: np.ndarray, box_rotation: np.ndarray
+):
+    """
+    We find the maximal ellipsoid contained within a box
+    { x | x = R * x_bar + p, -box_size/2 <= x_bar <= box_size/2}.
+    """
+    dim = box_size.size
+    assert box_center.shape == (dim,)
+    assert box_rotation.shape == (dim, dim)
+
+    # The box can be written as
+    # -box_size/2 <= R.T * (x-p) <= box_size/2
+    # Let's denote this "box constraint" as C * x <= d.
+    # According to s-lemma, an ellipsoid
+    # {x | x.T*S*x + b.T* x + c<= 0} is inside the ellipsoid if and only if
+    # xᵀSx+bᵀx+c − γ(Cᵢx−dᵢ) for some γ>= 0
+    # Namely the matrix
+    # [S             b/2 - γCᵢ] is psd.
+    # [(b/2 - γCᵢ).T   c + γdᵢ]
+    prog = solvers.MathematicalProgram()
+    S = prog.NewSymmetricContinuousVariables(dim, "S")
+    b = prog.NewContinuousVariables(dim, "b")
+    c = prog.NewContinuousVariables(1, "c")[0]
+    prog.AddPositiveSemidefiniteConstraint(S)
+    gamma = prog.NewContinuousVariables(2 * dim)
+    prog.AddBoundingBoxConstraint(0, np.inf, gamma)
+    C = np.concatenate((box_rotation.T, -box_rotation.T), axis=0)
+    d = np.concatenate(
+        (
+            box_size / 2 + box_rotation.T @ box_center,
+            box_size / 2 - box_rotation.T @ box_center,
+        )
+    )
+    for i in range(2 * dim):
+        psd_mat = np.empty((dim + 1, dim + 1), dtype=object)
+        psd_mat[:dim, :dim] = S
+        psd_mat[:dim, -1] = b / 2 - gamma[i] * C[i, :]
+        psd_mat[-1, :dim] = b / 2 - gamma[i] * C[i, :]
+        psd_mat[-1, -1] = c + gamma[i] * d[i]
+        prog.AddPositiveSemidefiniteConstraint(psd_mat)
+
+    S_init = np.eye(dim)
+    b_init = -2 * box_center
+    c_init = box_center.dot(box_center) - 0.99 * box_size.min() ** 2
+
+    S_sol, b_sol, c_sol = mut.maximize_inner_ellipsoid_sequentially(
+        prog, S, b, c, S_init, b_init, c_init, max_iter=10, convergence_tol=1e-5
+    )
+    # The maximal inner ellipsoid is the elliposoid
+    # {R * y + p | y.T * diag(1 / box_size**2) * y <= 1}.
+    S_max = box_rotation.T @ np.diag(1 / box_size**2) @ box_rotation
+    b_max = -2 * S_max @ box_center
+    c_max = box_center.dot(S_max @ box_center) - 1
+
+    ratio = c_sol / c_max
+    np.testing.assert_allclose(S_sol, S_max * ratio, atol=1e-5)
+    np.testing.assert_allclose(b_sol, b_max * ratio, atol=1e-5)
+
+
+def test_maximize_inner_ellipsoid_sequentially():
+    # 2D case, axis aligned box.
+    check_maximize_inner_ellipsoid_sequentially(
+        np.array([1.0, 2.0]), np.array([0.5, 0.6]), np.eye(2)
+    )
+
+    # 2D case, rotated box
+    check_maximize_inner_ellipsoid_sequentially(
+        np.array([2.0, 4.0]),
+        np.array([0.5, 1.0]),
+        np.array([[np.cos(0.2), -np.sin(0.2)], [np.sin(0.2), np.cos(0.2)]]),
+    )
+
+    # 3D case, rotated box.
+    check_maximize_inner_ellipsoid_sequentially(
+        np.array([2, 3, 5.0]),
+        np.array([0.5, -0.2, 0.3]),
+        pydrake.math.RotationMatrix(pydrake.math.RollPitchYaw(0.2, 0.3, 0.5)).matrix(),
     )
