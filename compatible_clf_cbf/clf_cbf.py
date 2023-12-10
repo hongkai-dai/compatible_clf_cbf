@@ -591,3 +591,99 @@ class CompatibleClfCbf:
         )
         prog.AddSosConstraint(poly)
         return poly
+
+    def _construct_search_clf_cbf_program(
+        self,
+        compatible_lagrangians: CompatibleLagrangians,
+        unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        x_equilibrium: Optional[np.ndarray],
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        barrier_eps: np.ndarray,
+    ) -> Tuple[
+        solvers.MathematicalProgram,
+        Optional[sym.Polynomial],
+        np.ndarray,
+        Optional[sym.Variable],
+    ]:
+        """
+        Construct a program to search for compatible CLF/CBFs given the Lagrangians.
+        Notice that we have not imposed the cost to the program yet.
+
+        Args:
+          compatible_lagrangians: The Lagrangian polynomials. Result from
+            solving construct_search_compatible_lagrangians().
+          unsafe_regions_lagrangians: unsafe_regions_lagrangians[i] is the
+            Lagrangian polynomial for the i'th CBF to certify that the CBF
+            0-super level set doesn't intersect with the i'th unsafe region.
+          clf_degree: if not None, the total degree of CLF.
+          cbf_degrees: cbf_degrees[i] is the total degree of the i'th CBF.
+          x_equilibrium: if not None, the equilibrium state.
+        """
+        assert len(unsafe_regions_lagrangians) == len(self.unsafe_regions)
+        assert len(cbf_degrees) == len(self.unsafe_regions)
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.xy_set)
+
+        if clf_degree is not None:
+            assert x_equilibrium is not None
+            clf_monomials = sym.MonomialBasis(self.x, int(np.floor(clf_degree / 2)))
+            if np.all(x_equilibrium == 0):
+                # If the equilibrium state x* = 0, then we know that V(x*)=0
+                # and V(x) > 0 forall x != x*. This means that the linear and
+                # constant coefficient of V is zero. Hence we remove "1" from
+                # clf_monomials.
+                clf_monomials = np.array(
+                    [
+                        monomial
+                        for monomial in clf_monomials
+                        if monomial.total_degree() != 0
+                    ]
+                )
+            V, clf_gram = prog.NewSosPolynomial(clf_monomials)
+            if np.any(x_equilibrium != 0):
+                # Add the constraint V(x*) = 0
+                (
+                    V_x_equilibrium_coeff,
+                    V_x_equilibrium_var,
+                    V_x_equilibrium_constant,
+                ) = V.EvaluateWithAffineCoefficients(
+                    self.x, x_equilibrium.reshape((-1, 1))
+                )
+                prog.AddLinearEqualityConstraint(
+                    V_x_equilibrium_coeff.reshape((1, -1)),
+                    -V_x_equilibrium_coeff[0],
+                    V_x_equilibrium_var,
+                )
+        else:
+            V = None
+
+        # Add CBF.
+        b = np.array(
+            [
+                prog.NewFreePolynomial(self.x_set, cbf_degree)
+                for cbf_degree in cbf_degrees
+            ]
+        )
+        for i in range(len(self.unsafe_regions)):
+            self._add_barrier_safe_constraint(
+                prog, i, b[i], unsafe_regions_lagrangians[i]
+            )
+        rho = None if V is None else prog.NewContinuousVariables(1, "rho")[0]
+        if rho is not None:
+            prog.AddBoundingBoxConstraint(0, np.inf, rho)
+
+        self._add_compatibility(
+            prog=prog,
+            V=V,
+            b=b,
+            kappa_V=kappa_V,
+            kappa_b=kappa_b,
+            lagrangians=compatible_lagrangians,
+            rho=rho,
+            barrier_eps=barrier_eps,
+        )
+
+        return (prog, V, b, rho)

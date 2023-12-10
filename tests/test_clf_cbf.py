@@ -1,5 +1,7 @@
 import compatible_clf_cbf.clf_cbf as mut
 
+from typing import List, Tuple
+
 import numpy as np
 import pytest  # noqa
 
@@ -44,22 +46,38 @@ class TestClfCbf(object):
         # test the functionality of the code.
         cls.f = np.array(
             [
-                sym.Polynomial(cls.x[0] * cls.x[0]),
-                sym.Polynomial(cls.x[1] * cls.x[0]),
+                sym.Polynomial(cls.x[0] ** 3),
+                sym.Polynomial(-cls.x[1] * cls.x[0]),
                 sym.Polynomial(cls.x[0] + cls.x[2]),
             ]
         )
         cls.g = np.array(
             [
-                [sym.Polynomial(cls.x[0] + cls.x[1]), sym.Polynomial()],
+                [sym.Polynomial(cls.x[0] ** 2 + cls.x[1] ** 2), sym.Polynomial()],
                 [sym.Polynomial(), sym.Polynomial(cls.x[1] * cls.x[2])],
-                [sym.Polynomial(cls.x[0] + cls.x[2]), sym.Polynomial(cls.x[1])],
+                [sym.Polynomial(cls.x[0] * cls.x[2]), sym.Polynomial(cls.x[1])],
             ]
         )
         cls.unsafe_regions = [
             np.array([sym.Polynomial(cls.x[0] + 1)]),
             np.array([sym.Polynomial(1 - cls.x[1]), sym.Polynomial(1 - cls.x[0])]),
         ]
+
+    def linearize(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Linearize the dynamics at x=0 at u = 0
+        """
+        env = {self.x[i]: 0 for i in range(self.nx)}
+        for i in range(self.nx):
+            assert self.f[i].Evaluate(env) == 0
+        A = np.empty((self.nx, self.nx))
+        B = np.empty((self.nx, self.nu))
+        for i in range(self.nx):
+            for j in range(self.nx):
+                A[i, j] = self.f[i].Differentiate(self.x[j]).Evaluate(env)
+            for j in range(self.nu):
+                B[i, j] = self.g[i, j].Evaluate(env)
+        return (A, B)
 
     def test_constructor(self):
         dut = mut.CompatibleClfCbf(
@@ -193,7 +211,7 @@ class TestClfCbf(object):
             with_clf=True,
             use_y_squared=True,
         )
-        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2)
+        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2 + dut.x[2] ** 2)
         b = np.array(
             [
                 sym.Polynomial(1 - dut.x[0] ** 2 - dut.x[1] ** 2),
@@ -204,17 +222,17 @@ class TestClfCbf(object):
         kappa_b = np.array([0.02, 0.03])
         lagrangian_degrees = mut.CompatibleLagrangianDegrees(
             lambda_y=[
-                mut.CompatibleLagrangianDegrees.Degree(x=2, y=2) for _ in range(self.nu)
+                mut.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(self.nu)
             ],
-            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
             y=None,
-            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=4, y=2),
             b_plus_eps=[
-                mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)
+                mut.CompatibleLagrangianDegrees.Degree(x=4, y=2)
                 for _ in range(len(self.unsafe_regions))
             ],
         )
-        rho = 0.1
+        rho = 0.001
         barrier_eps = np.array([0.01, 0.02])
 
         prog, lagrangians = dut.construct_search_compatible_lagrangians(
@@ -345,3 +363,120 @@ class TestClfCbf(object):
         assert utils.is_sos(lagrangians.cbf)
         for i in range(dut.unsafe_regions[0].size):
             assert utils.is_sos(lagrangians.unsafe_region[i])
+
+
+class TestClfCbfToy:
+    """
+    In this test, we construct a dynamical system that we know how to compute
+    compatible CLF/CBF as initial guess. This class is used for testing
+    searching the CLF/CBF starting from that initial guess.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        cls.nx = 2
+        cls.nu = 1
+        cls.x = sym.MakeVectorContinuousVariable(2, "x")
+        cls.f = np.array(
+            [
+                sym.Polynomial(),
+                sym.Polynomial(-cls.x[0] - 1.0 / 6 * cls.x[0] ** 3),
+            ]
+        )
+        cls.g = np.array([[sym.Polynomial(1)], [sym.Polynomial(-1)]])
+
+        cls.unsafe_regions = [np.array([sym.Polynomial(cls.x[0] + 10)])]
+
+        cls.kappa_V = 0.001
+        cls.kappa_b = np.array([cls.kappa_V])
+        cls.barrier_eps = np.array([0.01])
+
+    def search_lagrangians(
+        self,
+    ) -> Tuple[
+        mut.CompatibleClfCbf,
+        mut.CompatibleLagrangians,
+        List[mut.UnsafeRegionLagrangians],
+    ]:
+        use_y_squared = True
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=use_y_squared,
+        )
+        V_init = sym.Polynomial(self.x[0] ** 2 + self.x[1] ** 2)
+        b_init = np.array([sym.Polynomial(0.001 - self.x[0] ** 2 - self.x[1] ** 2)])
+
+        lagrangian_degrees = mut.CompatibleLagrangianDegrees(
+            lambda_y=[mut.CompatibleLagrangianDegrees.Degree(x=3, y=0)],
+            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=0, y=0),
+            y=None,
+            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+            b_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
+        )
+        rho = 0.01
+
+        (
+            compatible_prog,
+            compatible_lagrangians,
+        ) = dut.construct_search_compatible_lagrangians(
+            V_init,
+            b_init,
+            self.kappa_V,
+            self.kappa_b,
+            lagrangian_degrees,
+            rho,
+            self.barrier_eps,
+        )
+        solver_options = solvers.SolverOptions()
+        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 1)
+        solver = solvers.ClarabelSolver()
+        compatible_result = solver.Solve(compatible_prog, None, solver_options)
+        assert compatible_result.is_success()
+
+        compatible_lagrangians_result = compatible_lagrangians.get_result(
+            compatible_result, coefficient_tol=1e-5
+        )
+
+        unsafe_lagrangians = [
+            dut.certify_cbf_unsafe_region(
+                unsafe_region_index=0,
+                cbf=b_init[0],
+                cbf_lagrangian_degree=0,
+                unsafe_region_lagrangian_degrees=[0],
+                solver_options=None,
+            )
+        ]
+
+        return dut, compatible_lagrangians_result, unsafe_lagrangians
+
+    def test_search_clf_cbf(self):
+        (
+            dut,
+            compatible_lagrangians,
+            unsafe_lagrangians,
+        ) = self.search_lagrangians()
+        prog, V, b, rho = dut._construct_search_clf_cbf_program(
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            clf_degree=2,
+            cbf_degrees=[2],
+            x_equilibrium=np.array([0, 0.0]),
+            kappa_V=self.kappa_V,
+            kappa_b=self.kappa_b,
+            barrier_eps=self.barrier_eps,
+        )
+        solver_options = solvers.SolverOptions()
+        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 1)
+        solver = solvers.ClarabelSolver()
+        result = solver.Solve(prog, None, solver_options)
+        assert result.is_success()
+        V_result = result.GetSolution(V)
+        env = {self.x[i]: 0 for i in range(self.nx)}
+        assert V_result.Evaluate(env) == 0
+        assert sym.Monomial() not in V.monomial_to_coefficient_map()
