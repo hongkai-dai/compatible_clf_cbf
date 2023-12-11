@@ -9,6 +9,7 @@ import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 
 import compatible_clf_cbf.utils as utils
+import tests.test_utils as test_utils
 
 
 class TestCompatibleLagrangianDegrees(object):
@@ -480,3 +481,10 @@ class TestClfCbfToy:
         env = {self.x[i]: 0 for i in range(self.nx)}
         assert V_result.Evaluate(env) == 0
         assert sym.Monomial() not in V.monomial_to_coefficient_map()
+        assert test_utils.is_sos(V_result, solvers.ClarabelSolver.id())
+        assert V_result.TotalDegree() == 2
+        rho_result = result.GetSolution(rho)
+        assert rho_result >= 0
+
+        b_result = np.array([result.GetSolution(b[i]) for i in range(b.size)])
+        assert all([b_result[i].TotalDegree() <= 2 for i in range(b.size)])

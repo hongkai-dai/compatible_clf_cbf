@@ -1,5 +1,7 @@
 import compatible_clf_cbf.utils as mut
 
+from typing import Optional
+
 import numpy as np
 import pytest  # noqa
 
@@ -33,3 +35,20 @@ def test_add_log_det_lower():
 
     tester(2.0)
     tester(3.0)
+
+
+def is_sos(
+    poly: sym.Polynomial,
+    solver_id: Optional[solvers.SolverId] = None,
+    solver_options: Optional[solvers.SolverOptions] = None,
+):
+    prog = solvers.MathematicalProgram()
+    prog.AddIndeterminates(poly.indeterminates())
+    assert poly.decision_variables().empty()
+    prog.AddSosConstraint(poly)
+    if solver_id is None:
+        result = solvers.Solve(prog, None, solver_options)
+    else:
+        solver = solvers.MakeSolver(solver_id)
+        result = solver.Solve(prog, None, solver_options)
+    return result.is_success()
