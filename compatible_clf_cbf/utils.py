@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 import numpy as np
 
 import pydrake.symbolic as sym
@@ -57,11 +57,20 @@ def get_polynomial_result(
         return p_result
 
 
-def is_sos(p: sym.Polynomial) -> bool:
+def is_sos(
+    poly: sym.Polynomial,
+    solver_id: Optional[solvers.SolverId] = None,
+    solver_options: Optional[solvers.SolverOptions] = None,
+):
     prog = solvers.MathematicalProgram()
-    prog.AddIndeterminates(p.indeterminates())
-    prog.AddSosConstraint(p)
-    result = solvers.Solve(prog)
+    prog.AddIndeterminates(poly.indeterminates())
+    assert poly.decision_variables().empty()
+    prog.AddSosConstraint(poly)
+    if solver_id is None:
+        result = solvers.Solve(prog, None, solver_options)
+    else:
+        solver = solvers.MakeSolver(solver_id)
+        result = solver.Solve(prog, None, solver_options)
     return result.is_success()
 
 
@@ -118,3 +127,72 @@ def add_log_det_lower(
     prog.AddLinearConstraint(np.ones((1, X_rows)), lower, np.inf, t)
 
     return LogDetLowerRet(Z=Z, t=t)
+
+
+@dataclasses.dataclass
+class ContainmentLagrangian:
+    """
+    To certify that an algebraic set { x | f(x) <= 0} is contained in another
+    algebraic set {x | g(x) < 0}, we impose the condition
+    -1 - ϕ₁(x))g(x) + ϕ₂(x)f(x) is sos
+    ϕ₁(x) is sos, ϕ₂(x) is sos
+    """
+
+    # ϕ₂(x) in the documentation above.
+    inner: sym.Polynomial
+    # ϕ₁(x) in the documentation above.
+    outer: sym.Polynomial
+
+    def add_constraint(
+        self, prog, inner_poly: sym.Polynomial, outer_poly: sym.Polynomial
+    ) -> Tuple[sym.Polynomial, np.ndarray]:
+        return prog.AddSosConstraint(
+            -1 - self.outer * outer_poly + self.inner * inner_poly
+        )
+
+
+@dataclasses.dataclass
+class ContainmentLagrangianDegree:
+    """
+    The degree of the polynomials in ContainmentLagrangian
+    If degree < 0, then the Lagrangian polynomial is 1.
+    """
+
+    inner: int = -1
+    outer: int = -1
+
+    def construct_lagrangian(
+        self, prog: solvers.MathematicalProgram, x: sym.Variables
+    ) -> ContainmentLagrangian:
+        if self.inner < 0:
+            inner_lagrangian = sym.Polynomial(1)
+        elif self.inner == 0:
+            inner_lagrangian_var = prog.NewContinuousVariables(1)[0]
+            prog.AddBoundingBoxConstraint(0, np.inf, inner_lagrangian_var)
+            inner_lagrangian = sym.Polynomial(
+                {sym.Monomial(): sym.Expression(inner_lagrangian_var)}
+            )
+        else:
+            inner_lagrangian, _ = prog.NewSosPolynomial(x, self.inner)
+        if self.outer < 0:
+            outer_lagrangian = sym.Polynomial(1)
+        elif self.outer == 0:
+            outer_lagrangian_var = prog.NewContinuousVariables(1)[0]
+            prog.AddBoundingBoxConstraint(0, np.inf, outer_lagrangian_var)
+            outer_lagrangian = sym.Polynomial(
+                {sym.Monomial(): sym.Expression(outer_lagrangian_var)}
+            )
+        else:
+            outer_lagrangian, _ = prog.NewSosPolynomial(x, self.outer)
+        return ContainmentLagrangian(inner=inner_lagrangian, outer=outer_lagrangian)
+
+
+def to_lower_triangular_columns(mat: np.ndarray) -> np.ndarray:
+    assert mat.shape[0] == mat.shape[1]
+    dim = mat.shape[0]
+    ret = np.empty(int((dim + 1) * dim / 2), dtype=mat.dtype)
+    count = 0
+    for col in range(dim):
+        ret[count: count + dim - col] = mat[col:, col]
+        count += dim - col
+    return ret
