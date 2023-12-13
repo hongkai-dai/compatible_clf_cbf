@@ -8,8 +8,8 @@ import pytest  # noqa
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 
+import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
 import compatible_clf_cbf.utils as utils
-import tests.test_utils as test_utils
 
 
 class TestCompatibleLagrangianDegrees(object):
@@ -365,6 +365,50 @@ class TestClfCbf(object):
         for i in range(dut.unsafe_regions[0].size):
             assert utils.is_sos(lagrangians.unsafe_region[i])
 
+    def test_find_max_inner_ellipsoid(self):
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=True,
+        )
+        S_ellipsoid = np.diag(np.array([1, 2.0, 3.0]))
+        b_ellipsoid = np.array([0.5, 2, 1])
+        c_ellipsoid = b_ellipsoid.dot(np.linalg.solve(S_ellipsoid, b_ellipsoid)) / 4
+        V = sym.Polynomial(
+            self.x.dot(S_ellipsoid @ self.x) + b_ellipsoid.dot(self.x) + c_ellipsoid
+        )
+        b = np.array([sym.Polynomial(1 - self.x.dot(self.x))])
+        rho = 2
+        S_sol, b_sol, c_sol = dut._find_max_inner_ellipsoid(
+            V,
+            b,
+            rho,
+            V_contain_lagrangian_degree=utils.ContainmentLagrangianDegree(
+                inner=-1, outer=0
+            ),
+            b_contain_lagrangian_degree=[
+                utils.ContainmentLagrangianDegree(inner=-1, outer=0)
+            ],
+            S_ellipsoid_init=np.eye(3),
+            b_ellipsoid_init=np.zeros(3),
+            c_ellipsoid_init=-0.5,
+            max_iter=10,
+            convergence_tol=1e-4,
+            trust_region=100,
+        )
+        # Make sure the ellipsoid is within V<= rho and b >= 0
+        assert ellipsoid_utils.is_ellipsoid_contained(
+            S_sol, b_sol, c_sol, S_ellipsoid, b_ellipsoid, c_ellipsoid - rho
+        )
+        assert ellipsoid_utils.is_ellipsoid_contained(
+            S_sol, b_sol, c_sol, np.eye(3), np.zeros(3), -1
+        )
+
 
 class TestClfCbfToy:
     """
@@ -481,7 +525,7 @@ class TestClfCbfToy:
         env = {self.x[i]: 0 for i in range(self.nx)}
         assert V_result.Evaluate(env) == 0
         assert sym.Monomial() not in V.monomial_to_coefficient_map()
-        assert test_utils.is_sos(V_result, solvers.ClarabelSolver.id())
+        assert utils.is_sos(V_result, solvers.ClarabelSolver.id())
         assert V_result.TotalDegree() == 2
         rho_result = result.GetSolution(rho)
         assert rho_result >= 0

@@ -7,7 +7,12 @@ import numpy as np
 import pydrake.symbolic as sym
 import pydrake.solvers as solvers
 
-from compatible_clf_cbf.utils import check_array_of_polynomials, get_polynomial_result
+from compatible_clf_cbf.utils import (
+    ContainmentLagrangianDegree,
+    check_array_of_polynomials,
+    get_polynomial_result,
+)
+import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
 
 
 @dataclass
@@ -687,3 +692,61 @@ class CompatibleClfCbf:
         )
 
         return (prog, V, b, rho)
+
+    def _find_max_inner_ellipsoid(
+        self,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        rho: Optional[float],
+        V_contain_lagrangian_degree: Optional[ContainmentLagrangianDegree],
+        b_contain_lagrangian_degree: List[ContainmentLagrangianDegree],
+        S_ellipsoid_init: np.ndarray,
+        b_ellipsoid_init: np.ndarray,
+        c_ellipsoid_init: float,
+        max_iter: int = 10,
+        convergence_tol: float = 1e-3,
+        solver_id: Optional[solvers.SolverId] = None,
+        trust_region: Optional[float] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
+        prog = solvers.MathematicalProgram()
+        dim = self.x_set.size()
+
+        S_ellipsoid = prog.NewSymmetricContinuousVariables(dim, "S")
+        prog.AddPositiveSemidefiniteConstraint(S_ellipsoid)
+        b_ellipsoid = prog.NewContinuousVariables(dim, "b")
+        c_ellipsoid = prog.NewContinuousVariables(1, "c")[0]
+
+        ellipsoid = sym.Polynomial(
+            self.x.dot(S_ellipsoid @ self.x) + b_ellipsoid.dot(self.x) + c_ellipsoid,
+            self.x_set,
+        )
+        prog.AddIndeterminates(self.x_set)
+        if V_contain_lagrangian_degree is not None:
+            V_contain_lagrangian = V_contain_lagrangian_degree.construct_lagrangian(
+                prog, self.x_set
+            )
+            assert V is not None
+            assert rho is not None
+            V_contain_lagrangian.add_constraint(prog, ellipsoid, V - rho)
+        b_contain_lagrangians = [
+            degree.construct_lagrangian(prog, self.x_set)
+            for degree in b_contain_lagrangian_degree
+        ]
+
+        for i in range(len(b_contain_lagrangians)):
+            b_contain_lagrangians[i].add_constraint(prog, ellipsoid, -b[i])
+
+        S_sol, b_sol, c_sol = ellipsoid_utils.maximize_inner_ellipsoid_sequentially(
+            prog,
+            S_ellipsoid,
+            b_ellipsoid,
+            c_ellipsoid,
+            S_ellipsoid_init,
+            b_ellipsoid_init,
+            c_ellipsoid_init,
+            max_iter,
+            convergence_tol,
+            solver_id,
+            trust_region,
+        )
+        return (S_sol, b_sol, c_sol)

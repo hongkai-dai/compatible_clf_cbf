@@ -1,7 +1,5 @@
 import compatible_clf_cbf.utils as mut
 
-from typing import Optional
-
 import numpy as np
 import pytest  # noqa
 
@@ -37,18 +35,6 @@ def test_add_log_det_lower():
     tester(3.0)
 
 
-def is_sos(
-    poly: sym.Polynomial,
-    solver_id: Optional[solvers.SolverId] = None,
-    solver_options: Optional[solvers.SolverOptions] = None,
-):
-    prog = solvers.MathematicalProgram()
-    prog.AddIndeterminates(poly.indeterminates())
-    assert poly.decision_variables().empty()
-    prog.AddSosConstraint(poly)
-    if solver_id is None:
-        result = solvers.Solve(prog, None, solver_options)
-    else:
-        solver = solvers.MakeSolver(solver_id)
-        result = solver.Solve(prog, None, solver_options)
-    return result.is_success()
+def test_to_lower_triangular_columns():
+    vec = mut.to_lower_triangular_columns(np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+    np.testing.assert_equal(vec, np.array([1, 4, 7, 5, 8, 9]))
