@@ -251,3 +251,26 @@ def test_maximize_inner_ellipsoid_sequentially():
         np.array([0.5, -0.2, 0.3]),
         pydrake.math.RotationMatrix(pydrake.math.RollPitchYaw(0.2, 0.3, 0.5)).matrix(),
     )
+
+
+def test_add_ellipsoid_contain_pts_constraint():
+    prog = solvers.MathematicalProgram()
+    S = prog.NewSymmetricContinuousVariables(3, "S")
+    prog.AddPositiveSemidefiniteConstraint(S)
+    b = prog.NewContinuousVariables(3, "b")
+    c = prog.NewContinuousVariables(1, "c")[0]
+    pts = np.array([[1, 2, 3], [0.5, 1, -2]])
+    constraint = mut.add_ellipsoid_contain_pts_constraint(prog, S, b, c, pts)
+    result = solvers.Solve(prog)
+    assert result.is_success()
+    S_sol = result.GetSolution(S)
+    b_sol = result.GetSolution(b)
+    c_sol = result.GetSolution(c)
+    assert np.all(np.linalg.eigvals(S_sol) >= 0)
+    for i in range(pts.shape[0]):
+        assert pts[i].dot(S_sol @ pts[i]) + b_sol.dot(pts[i]) + c_sol <= 0
+    prog.RemoveConstraint(constraint)
+    assert (
+        len(prog.linear_constraints()) == 0
+        and len(prog.linear_equality_constraints()) == 0
+    )

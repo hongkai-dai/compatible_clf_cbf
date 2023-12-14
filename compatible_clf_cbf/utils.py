@@ -196,3 +196,16 @@ def to_lower_triangular_columns(mat: np.ndarray) -> np.ndarray:
         ret[count: count + dim - col] = mat[col:, col]
         count += dim - col
     return ret
+
+
+def solve_with_id(
+    prog: solvers.MathematicalProgram,
+    solver_id: Optional[solvers.SolverId] = None,
+    solver_options: Optional[solvers.SolverOptions] = None,
+) -> solvers.MathematicalProgramResult:
+    if solver_id is None:
+        result = solvers.Solve(prog, None, solver_options)
+    else:
+        solver = solvers.MakeSolver(solver_id)
+        result = solver.Solve(prog, None, solver_options)
+    return result

@@ -11,6 +11,7 @@ from compatible_clf_cbf.utils import (
     ContainmentLagrangianDegree,
     check_array_of_polynomials,
     get_polynomial_result,
+    solve_with_id,
 )
 import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
 
@@ -700,14 +701,17 @@ class CompatibleClfCbf:
         rho: Optional[float],
         V_contain_lagrangian_degree: Optional[ContainmentLagrangianDegree],
         b_contain_lagrangian_degree: List[ContainmentLagrangianDegree],
-        S_ellipsoid_init: np.ndarray,
-        b_ellipsoid_init: np.ndarray,
-        c_ellipsoid_init: float,
+        x_inner_init: np.ndarray,
         max_iter: int = 10,
         convergence_tol: float = 1e-3,
         solver_id: Optional[solvers.SolverId] = None,
         trust_region: Optional[float] = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
+        """
+        Args:
+          x_inner_init: The initial guess on a point inside V(x) <= rho and
+            b(x) >= 0. The initial ellipsoid will cover this point.
+        """
         prog = solvers.MathematicalProgram()
         dim = self.x_set.size()
 
@@ -735,6 +739,31 @@ class CompatibleClfCbf:
 
         for i in range(len(b_contain_lagrangians)):
             b_contain_lagrangians[i].add_constraint(prog, ellipsoid, -b[i])
+
+        # Make sure x_inner_init is inside V(x) <= rho and b(x) >= 0.
+        env_inner_init = {self.x[i]: x_inner_init[i] for i in range(self.nx)}
+        if V is not None:
+            assert V.Evaluate(env_inner_init) <= rho
+        for b_i in b:
+            assert b_i.Evaluate(env_inner_init) >= 0
+
+        # First solve an optimization problem to find an inner ellipsoid.
+        # Add a constraint that the initial ellipsoid contains x_inner_init.
+        x_inner_init_in_ellipsoid = (
+            ellipsoid_utils.add_ellipsoid_contain_pts_constraint(
+                prog,
+                S_ellipsoid,
+                b_ellipsoid,
+                c_ellipsoid,
+                x_inner_init.reshape((1, -1)),
+            )
+        )
+        result_init = solve_with_id(prog, solver_id, None)
+        assert result_init.is_success()
+        S_ellipsoid_init = result_init.GetSolution(S_ellipsoid)
+        b_ellipsoid_init = result_init.GetSolution(b_ellipsoid)
+        c_ellipsoid_init = result_init.GetSolution(c_ellipsoid)
+        prog.RemoveConstraint(x_inner_init_in_ellipsoid)
 
         S_sol, b_sol, c_sol = ellipsoid_utils.maximize_inner_ellipsoid_sequentially(
             prog,

@@ -132,9 +132,9 @@ def maximize_inner_ellipsoid_sequentially(
       b: A vector of decision variables. b must have been registered in `prog`
         already.
       c: A decision variable. c must have been registered in `prog` already.
-      S_init: A symmetric matrix of floats, the initial guess of S.
-      b_init: A vector of floats, the initial guess of b.
-      c_init: A float, the initial guess of c.
+      S_init: The initial guess of S.
+      b_init: The initial guess of b.
+      c_init: The initial guess of c.
     """
     S_bar = S_init
     b_bar = b_init
@@ -181,7 +181,6 @@ def maximize_inner_ellipsoid_sequentially(
         b_result = result.GetSolution(b)
         c_result = result.GetSolution(c)
         volume_result = volume(S_result, b_result, c_result)
-        print(f"{volume_result}")
         if volume_result - volume_prev <= convergence_tol:
             break
         else:
@@ -258,3 +257,27 @@ def is_ellipsoid_contained(
     prog.AddPositiveSemidefiniteConstraint(mat)
     result = solvers.Solve(prog)
     return result.is_success()
+
+
+def add_ellipsoid_contain_pts_constraint(
+    prog: solvers.MathematicalProgram,
+    S: np.ndarray,
+    b: np.ndarray,
+    c: sym.Variable,
+    pts: np.ndarray,
+) -> solvers.Binding[solvers.LinearConstraint]:
+    """
+    Add the constraint that the ellipsoid {x | x'*S*x + b' * x + c <= 0} contains pts[i]
+
+    Args:
+      pts: pts[i] is the i'th point to be contained in the ellipsoid.
+    """
+    dim = S.shape[0]
+    assert pts.shape[1] == dim
+    x = sym.MakeVectorContinuousVariable(dim, "x")
+    poly = sym.Polynomial(x.dot(S @ x) + b.dot(x) + c, sym.Variables(x))
+    linear_coeffs, vars, constant = poly.EvaluateWithAffineCoefficients(x, pts.T)
+    constraint = prog.AddLinearConstraint(
+        linear_coeffs, np.full((pts.shape[0],), -np.inf), -constant, vars
+    )
+    return constraint
