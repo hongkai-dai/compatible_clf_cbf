@@ -394,9 +394,7 @@ class TestClfCbf(object):
             b_contain_lagrangian_degree=[
                 utils.ContainmentLagrangianDegree(inner=-1, outer=0)
             ],
-            S_ellipsoid_init=np.eye(3),
-            b_ellipsoid_init=np.zeros(3),
-            c_ellipsoid_init=-0.5,
+            x_inner_init=np.linalg.solve(S_ellipsoid, b_ellipsoid) / -2,
             max_iter=10,
             convergence_tol=1e-4,
             trust_region=100,
