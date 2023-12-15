@@ -347,7 +347,7 @@ class CompatibleClfCbf:
         Certifies that the 0-superlevel set {x | bᵢ(x) >= 0} does not intersect
         with the unsafe region self.unsafe_regions[unsafe_region_index].
 
-        If we denote the unsafe region as {x | q(x) <= 0}, then we impose the constraint
+        If we denote the unsafe region as {x | p(x) <= 0}, then we impose the constraint
 
         We impose the constraint
         -(1+ϕᵢ,₀(x))*bᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
@@ -552,6 +552,7 @@ class CompatibleClfCbf:
 
         # Compute s₄(x, y)ᵀ(b(x)+ε)
         if barrier_eps is not None:
+            assert np.all(barrier_eps >= 0)
             assert lagrangians.b_plus_eps is not None
             poly -= lagrangians.b_plus_eps.dot(barrier_eps + b)
 
