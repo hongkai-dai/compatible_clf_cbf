@@ -274,3 +274,40 @@ def test_add_ellipsoid_contain_pts_constraint():
         len(prog.linear_constraints()) == 0
         and len(prog.linear_equality_constraints()) == 0
     )
+
+
+def test_scale_ellipsoid():
+    center = np.array([0, 1, 1.5])
+    A = np.diag(np.array([1, 2, 3]))
+    # Build an ellipsoid {A*(x+center) | |x|<=1 }
+    A_inv = np.linalg.inv(A)
+    S = A_inv.T @ A_inv
+    b = -2 * A_inv @ center
+    c = center.dot(center) - 1
+    c_scale = mut.scale_ellipsoid(S, b, c, scale=2)
+
+    assert mut.in_ellipsoid(S, b, c_scale, A @ (center + np.array([1, 0, 0])))
+    assert mut.in_ellipsoid(S, b, c_scale, A @ (center + 1.99 * np.array([0, 0, 1])))
+    assert not mut.in_ellipsoid(
+        S, b, c_scale, A @ (center + 2.01 * np.array([0, 1, 0]))
+    )
+
+
+def test_in_ellipsoid():
+    center = np.array([0, 1, 1.5])
+    A = np.diag(np.array([1, 2, 3]))
+    # Build an ellipsoid {A*(x+center) | |x|<=1 }
+    A_inv = np.linalg.inv(A)
+    S = A_inv.T @ A_inv
+    b = -2 * A_inv @ center
+    c = center.dot(center) - 1
+
+    assert mut.in_ellipsoid(S, b, c, A @ center)
+    assert mut.in_ellipsoid(S, b, c, A @ (center + np.array([0.5, 0.2, 0.3])))
+    assert not mut.in_ellipsoid(S, b, c, A @ (center + np.array([1.1, 0, 0])))
+    assert mut.in_ellipsoid(
+        S,
+        b,
+        c,
+        (center + np.array([[0.5, 0, 0.2], [1.1, 0, 0], [1.2, 0, -1]])) @ A.T,
+    ) == [True, False, False]
