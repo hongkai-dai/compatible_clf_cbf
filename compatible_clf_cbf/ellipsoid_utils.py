@@ -2,7 +2,7 @@
 The utility function for manipulating ellipsoids
 """
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -281,3 +281,41 @@ def add_ellipsoid_contain_pts_constraint(
         linear_coeffs, np.full((pts.shape[0],), -np.inf), -constant, vars
     )
     return constraint
+
+
+def scale_ellipsoid(S: np.ndarray, b: np.ndarray, c: float, scale: float) -> float:
+    """
+    Scale the "radius" of the ellipsoid {x | x'*S*x + b'*x + c<=0} about its
+    center by a factor of `scale`.
+
+    Return: c_new The scaled ellipsoid is {x | x'*S*x + b'*x + c_new <= 0}
+    """
+    assert scale >= 0
+
+    # S and b are unchanged after scaling.
+    # The ellipsoid can be written as |Ax + A⁻ᵀb/2|² <= c−bᵀS⁻¹b/4
+    # where AᵀA=S
+    # So c_new -bᵀS⁻¹b/4= scale² * (c−bᵀS⁻¹b/4)
+    # namely c_new = scale² * c + (1-scale²)*bᵀS⁻¹b/4
+    scale_squared = scale**2
+    return scale_squared * c + (1 - scale_squared) * b.dot(np.linalg.solve(S, b)) / 4
+
+
+def in_ellipsoid(
+    S: np.ndarray, b: np.ndarray, c: float, pts: np.ndarray
+) -> Union[bool, List[bool]]:
+    """
+    Return if `pts` is/are in the ellipsoid {x | x'*S*x+b'*x+c <= 0}.
+
+    Args:
+      pts: A single point or a group of points. Each row is a point.
+    Return:
+      flag: If pts is a 1-D array, then we return a single boolean. If pts is a
+        2D array, then flag[i] indicates whether pts[i] is in the ellipsoid.
+    """
+    dim = S.shape[0]
+    if pts.shape == (dim,):
+        return pts.dot(S @ pts) + b.dot(pts) + c <= 0
+    else:
+        assert pts.shape[1] == dim
+        return (np.sum(pts * (pts @ S), axis=1) + pts @ b + c <= 0).tolist()
