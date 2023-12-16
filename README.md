@@ -27,7 +27,13 @@ $$\exists u\in\mathcal{U} \begin{cases}L_fV(x)+L_gV(x)u\leq -\kappa_VV(x)\\
 We will certify and synthesize such compatible CLF and CBFs through Sum-of-Squares optimization.
 
 # Getting started
-After installing all the dependencies in `requirements.txt`, please make sure that you can use Mosek solver. Please set the environment variable that points to the Mosek license as
+## Installation
+Run
+```
+$ pip install -e .
+```
+to install the dependencies and the package.
+After the installation, please make sure that you can use Mosek solver. Please set the environment variable that points to the Mosek license as
 ```
 export MOSEKLM_LICENSE_FILE=/path/to/mosek.lic
 ```
