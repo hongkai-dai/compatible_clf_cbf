@@ -407,6 +407,61 @@ class TestClfCbf(object):
             S_sol, b_sol, c_sol, np.eye(3), np.zeros(3), -1
         )
 
+    def test_add_ellipsoid_in_compatible_region_constraint(self):
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x)
+        x_set = sym.Variables(self.x)
+        V, _ = prog.NewSosPolynomial(x_set, 4)
+        b = np.empty((2,), dtype=object)
+        for i in range(b.size):
+            b[i] = prog.NewFreePolynomial(x_set, 4)
+        rho = prog.NewContinuousVariables(1, "rho")[0]
+        S_ellipsoid_inner = np.array([[3, 0, 1], [0, 4, 2.0], [1.0, 2.0, 4]])
+        b_ellipsoid_inner = np.array([1, 3, 2])
+        c_ellipsoid_inner: float = (
+            b_ellipsoid_inner.dot(np.linalg.solve(S_ellipsoid_inner, b_ellipsoid_inner))
+            / 4
+            - 0.5
+        )
+
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=True,
+        )
+
+        dut._add_ellipsoid_in_compatible_region_constraint(
+            prog, V, b, rho, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+        )
+        result = solvers.Solve(prog)
+        assert result.is_success()
+        # Now sample many points. If the point is in the inner ellipsoid, it
+        # should also be in the compatible region.
+        x_samples = np.linalg.solve(
+            S_ellipsoid_inner, -b_ellipsoid_inner
+        ) / 2 + np.random.random((1000, self.nx))
+        in_ellipsoid = ellipsoid_utils.in_ellipsoid(
+            S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, x_samples
+        )
+        V_sol = result.GetSolution(V)
+        rho_sol = result.GetSolution(rho)
+        b_sol = np.array([result.GetSolution(b_i) for b_i in b])
+        in_V = V_sol.EvaluateIndeterminates(self.x, x_samples.T) <= rho_sol
+        in_b = np.concatenate(
+            [
+                b_i.EvaluateIndeterminates(self.x, x_samples.T >= 0).reshape((1, -1))
+                for b_i in b_sol
+            ],
+            axis=0,
+        ).T
+        in_compatible = np.logical_and(np.all(in_b, axis=1), in_V)
+        assert np.all(in_compatible[in_ellipsoid])
+
 
 class TestClfCbfToy:
     """

@@ -426,6 +426,53 @@ class CompatibleClfCbf:
         )
         return (prog, lagrangians)
 
+    def search_clf_cbf_given_lagrangian(
+        self,
+        compatible_lagrangians: CompatibleLagrangians,
+        unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        x_equilibrium: Optional[np.ndarray],
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        barrier_eps: np.ndarray,
+        S_ellipsoid_inner: np.ndarray,
+        b_ellipsoid_inner: np.ndarray,
+        c_ellipsoid_inner: float,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+    ) -> Tuple[
+        Optional[sym.Polynomial],
+        Optional[np.ndarray],
+        Optional[float],
+        solvers.MathematicalProgramResult,
+    ]:
+        prog, V, b, rho = self._construct_search_clf_cbf_program(
+            compatible_lagrangians,
+            unsafe_regions_lagrangians,
+            clf_degree,
+            cbf_degrees,
+            x_equilibrium,
+            kappa_V,
+            kappa_b,
+            barrier_eps,
+        )
+
+        self._add_ellipsoid_in_compatible_region_constraint(
+            prog, V, b, rho, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+        )
+
+        result = solve_with_id(prog, solver_id, solver_options)
+        if result.is_success():
+            V_sol = result.GetSolution(V)
+            b_sol = np.array([result.GetSolution(b_i) for b_i in b])
+            rho_sol = result.GetSolution(rho)
+        else:
+            V_sol = None
+            b_sol = None
+            rho_sol = None
+        return V_sol, b_sol, rho_sol, result
+
     def _calc_xi_Lambda(
         self,
         *,
@@ -780,3 +827,49 @@ class CompatibleClfCbf:
             trust_region,
         )
         return (S_sol, b_sol, c_sol)
+
+    def _add_ellipsoid_in_compatible_region_constraint(
+        self,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        rho: sym.Variable,
+        S_ellipsoid_inner: np.ndarray,
+        b_ellipsoid_inner: np.ndarray,
+        c_ellipsoid_inner: float,
+    ):
+        """
+        Add the constraint that the ellipsoid is contained within the
+        compatible region {x | V(x) <= rho, b(x) >= 0}.
+        """
+        ellipsoid_poly = sym.Polynomial(
+            self.x.dot(S_ellipsoid_inner @ self.x)
+            + b_ellipsoid_inner.dot(self.x)
+            + c_ellipsoid_inner,
+            self.x_set,
+        )
+        if V is not None:
+            V_degree = V.TotalDegree()
+            ellipsoid_in_V_lagrangian_degree = ContainmentLagrangianDegree(
+                inner=V_degree - 2, outer=-1
+            )
+            ellipsoid_in_V_lagrangian = (
+                ellipsoid_in_V_lagrangian_degree.construct_lagrangian(prog, self.x_set)
+            )
+            assert rho is not None
+            ellipsoid_in_V_lagrangian.add_constraint(
+                prog,
+                inner_poly=ellipsoid_poly,
+                outer_poly=V - sym.Polynomial({sym.Monomial(): sym.Expression(rho)}),
+            )
+        for i in range(b.size):
+            b_degree = b[i].TotalDegree()
+            ellipsoid_in_b_lagrangian_degree = ContainmentLagrangianDegree(
+                inner=b_degree - 2, outer=-1
+            )
+            ellipsoid_in_b_lagrangian = (
+                ellipsoid_in_b_lagrangian_degree.construct_lagrangian(prog, self.x_set)
+            )
+            ellipsoid_in_b_lagrangian.add_constraint(
+                prog, inner_poly=ellipsoid_poly, outer_poly=-b[i]
+            )
