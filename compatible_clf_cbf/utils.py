@@ -193,7 +193,7 @@ def to_lower_triangular_columns(mat: np.ndarray) -> np.ndarray:
     ret = np.empty(int((dim + 1) * dim / 2), dtype=mat.dtype)
     count = 0
     for col in range(dim):
-        ret[count: count + dim - col] = mat[col:, col]
+        ret[count : count + dim - col] = mat[col:, col]  # noqa
         count += dim - col
     return ret
 
