@@ -451,15 +451,7 @@ class TestClfCbf(object):
         V_sol = result.GetSolution(V)
         rho_sol = result.GetSolution(rho)
         b_sol = np.array([result.GetSolution(b_i) for b_i in b])
-        in_V = V_sol.EvaluateIndeterminates(self.x, x_samples.T) <= rho_sol
-        in_b = np.concatenate(
-            [
-                b_i.EvaluateIndeterminates(self.x, x_samples.T >= 0).reshape((1, -1))
-                for b_i in b_sol
-            ],
-            axis=0,
-        ).T
-        in_compatible = np.logical_and(np.all(in_b, axis=1), in_V)
+        in_compatible = dut.in_compatible_region(V_sol, b_sol, rho_sol, x_samples)
         assert np.all(in_compatible[in_ellipsoid])
 
 
@@ -489,12 +481,35 @@ class TestClfCbfToy:
         cls.kappa_b = np.array([cls.kappa_V])
         cls.barrier_eps = np.array([0.01])
 
+    def check_unsafe_region_by_sample(self, b: np.ndarray, x_samples):
+        # Sample many points, make sure that {x | b[i] >= 0} doesn't intersect
+        # with the i'th unsafe region.
+        for i, unsafe_region in enumerate(self.unsafe_regions):
+            unsafe_flag = np.all(
+                np.concatenate(
+                    [
+                        (
+                            unsafe_region_j.EvaluateIndeterminates(self.x, x_samples.T)
+                            <= 0
+                        ).reshape((-1, 1))
+                        for unsafe_region_j in unsafe_region
+                    ],
+                    axis=1,
+                ),
+                axis=1,
+            )
+            in_b = b[i].EvaluateIndeterminates(self.x, x_samples.T) >= 0
+            assert np.all(np.logical_not(unsafe_flag[in_b]))
+
     def search_lagrangians(
         self,
     ) -> Tuple[
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
         List[mut.UnsafeRegionLagrangians],
+        sym.Polynomial,
+        np.ndarray,
+        float,
     ]:
         use_y_squared = True
         dut = mut.CompatibleClfCbf(
@@ -512,7 +527,7 @@ class TestClfCbfToy:
 
         lagrangian_degrees = mut.CompatibleLagrangianDegrees(
             lambda_y=[mut.CompatibleLagrangianDegrees.Degree(x=3, y=0)],
-            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=0, y=0),
+            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
             y=None,
             rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
             b_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
@@ -532,7 +547,6 @@ class TestClfCbfToy:
             self.barrier_eps,
         )
         solver_options = solvers.SolverOptions()
-        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 1)
         compatible_result = solvers.Solve(compatible_prog, None, solver_options)
         assert compatible_result.is_success()
 
@@ -550,13 +564,23 @@ class TestClfCbfToy:
             )
         ]
 
-        return dut, compatible_lagrangians_result, unsafe_lagrangians
+        return (
+            dut,
+            compatible_lagrangians_result,
+            unsafe_lagrangians,
+            V_init,
+            b_init,
+            rho,
+        )
 
-    def test_search_clf_cbf(self):
+    def test_construct_search_clf_cbf_program(self):
         (
             dut,
             compatible_lagrangians,
             unsafe_lagrangians,
+            _,
+            _,
+            _,
         ) = self.search_lagrangians()
         prog, V, b, rho = dut._construct_search_clf_cbf_program(
             compatible_lagrangians,
@@ -569,18 +593,136 @@ class TestClfCbfToy:
             barrier_eps=self.barrier_eps,
         )
         solver_options = solvers.SolverOptions()
-        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 1)
-        solver = solvers.ClarabelSolver()
-        result = solver.Solve(prog, None, solver_options)
+        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
+        result = solvers.Solve(prog, None, solver_options)
         assert result.is_success()
         V_result = result.GetSolution(V)
         env = {self.x[i]: 0 for i in range(self.nx)}
         assert V_result.Evaluate(env) == 0
         assert sym.Monomial() not in V.monomial_to_coefficient_map()
-        assert utils.is_sos(V_result, solvers.ClarabelSolver.id())
+        assert utils.is_sos(V_result)
         assert V_result.TotalDegree() == 2
         rho_result = result.GetSolution(rho)
         assert rho_result >= 0
 
         b_result = np.array([result.GetSolution(b[i]) for i in range(b.size)])
         assert all([b_result[i].TotalDegree() <= 2 for i in range(b.size)])
+
+        # Sample many points, make sure that {x | b[i] >= 0} doesn't intersect
+        # with the i'th unsafe region.
+        x_samples = 10 * np.random.randn(1000, 2) - np.array([[10, 0]])
+        self.check_unsafe_region_by_sample(b_result, x_samples)
+
+    def test_search_clf_cbf_given_lagrangian(self):
+        (
+            dut,
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            V,
+            b,
+            rho,
+        ) = self.search_lagrangians()
+
+        # Find the large ellipsoid inside the compatible region.
+        x_equilibrium = np.array([0.0, 0.0])
+        (
+            S_ellipsoid_inner,
+            b_ellipsoid_inner,
+            c_ellipsoid_inner,
+        ) = dut._find_max_inner_ellipsoid(
+            V,
+            b,
+            rho,
+            V_contain_lagrangian_degree=mut.ContainmentLagrangianDegree(
+                inner=-1, outer=0
+            ),
+            b_contain_lagrangian_degree=[
+                mut.ContainmentLagrangianDegree(inner=-1, outer=0)
+            ],
+            x_inner_init=x_equilibrium,
+            max_iter=10,
+            convergence_tol=1e-4,
+            trust_region=1000,
+        )
+
+        V_new, b_new, rho_new, result = dut.search_clf_cbf_given_lagrangian(
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            clf_degree=2,
+            cbf_degrees=[2],
+            x_equilibrium=x_equilibrium,
+            kappa_V=self.kappa_V,
+            kappa_b=self.kappa_b,
+            barrier_eps=self.barrier_eps,
+            S_ellipsoid_inner=S_ellipsoid_inner,
+            b_ellipsoid_inner=b_ellipsoid_inner,
+            c_ellipsoid_inner=c_ellipsoid_inner,
+        )
+        assert result.is_success()
+        # Check that the compatible region contains the inner_ellipsoid.
+        x_samples = np.random.randn(100, 2)
+        in_ellipsoid = ellipsoid_utils.in_ellipsoid(
+            S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, x_samples
+        )
+        assert b_new is not None
+        in_compatible = dut.in_compatible_region(V_new, b_new, rho_new, x_samples)
+        assert np.all(in_compatible[in_ellipsoid])
+
+    def test_binary_search_clf_cbf_given_lagrangian(self):
+        (
+            dut,
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            V_init,
+            b_init,
+            rho_init,
+        ) = self.search_lagrangians()
+
+        x_equilibrium = np.array([0.0, 0.0])
+        (
+            S_ellipsoid_inner,
+            b_ellipsoid_inner,
+            c_ellipsoid_inner,
+        ) = dut._find_max_inner_ellipsoid(
+            V_init,
+            b_init,
+            rho_init,
+            V_contain_lagrangian_degree=mut.ContainmentLagrangianDegree(
+                inner=-1, outer=0
+            ),
+            b_contain_lagrangian_degree=[
+                mut.ContainmentLagrangianDegree(inner=-1, outer=0)
+            ],
+            x_inner_init=x_equilibrium,
+            max_iter=10,
+            convergence_tol=1e-4,
+            trust_region=1000,
+        )
+
+        solver_options = solvers.SolverOptions()
+        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
+
+        V, b, rho = dut.binary_search_clf_cbf(
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            clf_degree=2,
+            cbf_degrees=[2],
+            x_equilibrium=x_equilibrium,
+            kappa_V=self.kappa_V,
+            kappa_b=self.kappa_b,
+            barrier_eps=self.barrier_eps,
+            S_ellipsoid_inner=S_ellipsoid_inner,
+            b_ellipsoid_inner=b_ellipsoid_inner,
+            c_ellipsoid_inner=c_ellipsoid_inner,
+            scale_min=1,
+            scale_max=50,
+            scale_tol=0.1,
+            solver_options=solver_options,
+        )
+        assert V is not None
+        assert b is not None
+        assert rho is not None
+        # Sample many points, make sure that {x | b[i] >= 0} doesn't intersect
+        # with the i'th unsafe region.
+        x_samples = 5 * np.random.randn(1000, 2) - np.array([[5, 0]])
+        self.check_unsafe_region_by_sample(b, x_samples)
