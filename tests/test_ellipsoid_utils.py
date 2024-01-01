@@ -2,6 +2,7 @@ import compatible_clf_cbf.ellipsoid_utils as mut
 
 import jax.numpy as jnp
 import jax
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest  # noqa
 
@@ -311,3 +312,25 @@ def test_in_ellipsoid():
         c,
         (center + np.array([[0.5, 0, 0.2], [1.1, 0, 0], [1.2, 0, -1]])) @ A.T,
     ) == [True, False, False]
+
+
+def test_to_affine_ball():
+    def check(S, b, c):
+        A, d = mut.to_affine_ball(S, b, c)
+
+        # The ellipsoid is {x | xᵀA⁻ᵀA⁻¹x − 2dᵀA⁻¹x + dᵀd−1 ≤ 0}
+        ratio = (d.dot(d) - 1) / c
+        np.testing.assert_allclose(np.linalg.inv(A @ A.T), S * ratio)
+        np.testing.assert_allclose(-2 * np.linalg.solve(A.T, d), b * ratio)
+
+    check(np.eye(2), np.zeros(2), 1)
+    check(np.diag(np.array([1.0, 2.0, 3.0])), np.array([2.0, 3.0, 4.0]), -10)
+
+
+def test_draw_ellipsoid2d():
+    A = np.array([[2, 1], [0, 1.0]])
+    d = np.array([1, 3])
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    lines = mut.draw_ellipsoid2d(ax, A, d, color="k")
+    assert isinstance(lines, list)
