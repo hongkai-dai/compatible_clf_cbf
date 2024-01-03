@@ -533,8 +533,7 @@ class TestClfCbfToy:
         )
         solver_options = solvers.SolverOptions()
         solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 1)
-        solver = solvers.ClarabelSolver()
-        compatible_result = solver.Solve(compatible_prog, None, solver_options)
+        compatible_result = solvers.Solve(compatible_prog, None, solver_options)
         assert compatible_result.is_success()
 
         compatible_lagrangians_result = compatible_lagrangians.get_result(
