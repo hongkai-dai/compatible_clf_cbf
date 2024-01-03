@@ -133,8 +133,8 @@ def add_log_det_lower(
 class ContainmentLagrangian:
     """
     To certify that an algebraic set { x | f(x) <= 0} is contained in another
-    algebraic set {x | g(x) < 0}, we impose the condition
-    -1 - ϕ₁(x))g(x) + ϕ₂(x)f(x) is sos
+    algebraic set {x | g(x) <= 0}, we impose the condition
+    -(1 + ϕ₁(x))g(x) + ϕ₂(x)f(x) is sos
     ϕ₁(x) is sos, ϕ₂(x) is sos
     """
 
@@ -147,7 +147,7 @@ class ContainmentLagrangian:
         self, prog, inner_poly: sym.Polynomial, outer_poly: sym.Polynomial
     ) -> Tuple[sym.Polynomial, np.ndarray]:
         return prog.AddSosConstraint(
-            -1 - self.outer * outer_poly + self.inner * inner_poly
+            -(1 + self.outer) * outer_poly + self.inner * inner_poly
         )
 
 
@@ -175,7 +175,10 @@ class ContainmentLagrangianDegree:
         else:
             inner_lagrangian, _ = prog.NewSosPolynomial(x, self.inner)
         if self.outer < 0:
-            outer_lagrangian = sym.Polynomial(1)
+            # The Lagrangian multiply with the outer set is
+            # (1 + outer_lagrangian), hence we can set outer_lagrangian = 0,
+            # such that the multiplied Lagrangian is 1.
+            outer_lagrangian = sym.Polynomial(0)
         elif self.outer == 0:
             outer_lagrangian_var = prog.NewContinuousVariables(1)[0]
             prog.AddBoundingBoxConstraint(0, np.inf, outer_lagrangian_var)
