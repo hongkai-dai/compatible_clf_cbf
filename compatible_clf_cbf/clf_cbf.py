@@ -447,6 +447,16 @@ class CompatibleClfCbf:
         Optional[float],
         solvers.MathematicalProgramResult,
     ]:
+        """
+        Given the Lagrangian multipliers and an inner ellipsoid, find the clf
+        and cbf, such that the compatible region contains that inner ellipsoid.
+
+        Returns: (V, b, rho, result)
+          V: The CLF.
+          b: The CBF.
+          rho: The certified ROA is {x | V(x) <= rho}.
+          result: The result of the optimization program.
+        """
         prog, V, b, rho = self._construct_search_clf_cbf_program(
             compatible_lagrangians,
             unsafe_regions_lagrangians,
@@ -472,6 +482,134 @@ class CompatibleClfCbf:
             b_sol = None
             rho_sol = None
         return V_sol, b_sol, rho_sol, result
+
+    def binary_search_clf_cbf(
+        self,
+        compatible_lagrangians: CompatibleLagrangians,
+        unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        x_equilibrium: Optional[np.ndarray],
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        barrier_eps: np.ndarray,
+        S_ellipsoid_inner: np.ndarray,
+        b_ellipsoid_inner: np.ndarray,
+        c_ellipsoid_inner: float,
+        scale_min: float,
+        scale_max: float,
+        scale_tol: float,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+    ) -> Tuple[Optional[sym.Polynomial], np.ndarray, Optional[float]]:
+        """
+        Given the Lagrangian multipliers, find the compatible CLF and CBFs,
+        with the goal to enlarge the compatible region.
+
+        We measure the size of the compatible region through binary searching
+        the inner ellipsoid. We scale the inner ellipsoid about its center,
+        and binary search on the scaling factor.
+
+        Args:
+          scale_min: The minimum of the ellipsoid scaling factor.
+          scale_max: The maximal of the ellipsoid scaling factor.
+          scale_tol: Terminate the binary search when the difference between
+            the max/min scaling factor is below this tolerance.
+
+        Return: (V, b, rho)
+        """
+
+        def search(
+            scale,
+        ) -> Tuple[
+            Optional[sym.Polynomial],
+            Optional[np.ndarray],
+            Optional[float],
+            solvers.MathematicalProgramResult,
+        ]:
+            c_new = ellipsoid_utils.scale_ellipsoid(
+                S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, scale
+            )
+            V, b, rho, result = self.search_clf_cbf_given_lagrangian(
+                compatible_lagrangians,
+                unsafe_regions_lagrangians,
+                clf_degree,
+                cbf_degrees,
+                x_equilibrium,
+                kappa_V,
+                kappa_b,
+                barrier_eps,
+                S_ellipsoid_inner,
+                b_ellipsoid_inner,
+                c_new,
+                solver_id,
+                solver_options,
+            )
+            return V, b, rho, result
+
+        assert scale_max >= scale_min
+        assert scale_tol > 0
+        V, b, rho, result = search(scale_max)
+        if result.is_success():
+            print(f"binary_search_clf_cbf: scale={scale_max} is feasible.")
+            assert b is not None
+            return V, b, rho
+
+        V_success, b_success, rho_success, result = search(scale_min)
+        assert (
+            result.is_success()
+        ), f"binary_search_clf_cbf: scale_min={scale_min} is not feasible."
+        assert b_success is not None
+
+        while scale_max - scale_min > scale_tol:
+            scale = (scale_max + scale_min) / 2
+            V, b, rho, result = search(scale)
+            if result.is_success():
+                print(f"binary_search_clf_cbf: scale={scale} is feasible.")
+                scale_min = scale
+                V_success = V
+                assert b is not None
+                b_success = b
+                rho_success = rho
+            else:
+                print(f"binary_search_clf_cbf: scale={scale} is not feasible.")
+                scale_max = scale
+
+        return V_success, b_success, rho_success
+
+    def in_compatible_region(
+        self,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        rho: Optional[float],
+        x_samples: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Returns if x_samples[i] is in the compatible region
+        {x | V(x) <= rho, b(x) >= 0}.
+
+        Return:
+        in_compatible_flag: in_compatible_flag[i] is True iff x_samples[i] is
+          in the compatible region.
+        """
+        in_b = np.all(
+            np.concatenate(
+                [
+                    (b_i.EvaluateIndeterminates(self.x, x_samples.T) >= 0).reshape(
+                        (-1, 1)
+                    )
+                    for b_i in b
+                ],
+                axis=1,
+            ),
+            axis=1,
+        )
+        if V is not None:
+            assert rho is not None
+            in_V = V.EvaluateIndeterminates(self.x, x_samples.T) <= rho
+            return np.logical_and(in_b, in_V)
+        else:
+            return in_b
 
     def _calc_xi_Lambda(
         self,
