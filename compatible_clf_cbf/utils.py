@@ -212,3 +212,23 @@ def solve_with_id(
         solver = solvers.MakeSolver(solver_id)
         result = solver.Solve(prog, None, solver_options)
     return result
+
+
+def new_sos_polynomial(
+    prog: solvers.MathematicalProgram, x_set: sym.Variables, degree: int
+) -> Tuple[sym.Polynomial, np.ndarray]:
+    """
+    Returns a new SOS polynomial (where the coefficients are decision variables).
+
+    Return:
+      sos_poly: The newly constructed sos polynomial.
+      gram: The Gram matrix of sos_poly.
+    """
+    if degree == 0:
+        coeff = prog.NewContinuousVariables(1)[0]
+        prog.AddBoundingBoxConstraint(0, np.inf, coeff)
+        sos_poly = sym.Polynomial({sym.Monomial(): sym.Expression(coeff)})
+        return sos_poly, np.array([[coeff]])
+    else:
+        sos_poly, gram = prog.NewSosPolynomial(x_set, degree)
+        return sos_poly, gram
