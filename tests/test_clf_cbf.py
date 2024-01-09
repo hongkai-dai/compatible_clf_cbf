@@ -66,7 +66,7 @@ class TestClfCbf(object):
 
     def linearize(self) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Linearize the dynamics at x=0 at u = 0
+        Linearize the dynamics at x=0 and u = 0
         """
         env = {self.x[i]: 0 for i in range(self.nx)}
         for i in range(self.nx):
