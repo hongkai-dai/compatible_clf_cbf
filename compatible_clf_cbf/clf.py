@@ -13,6 +13,7 @@ from compatible_clf_cbf.utils import (
     check_array_of_polynomials,
     get_polynomial_result,
     new_sos_polynomial,
+    solve_with_id,
 )
 
 
@@ -28,45 +29,6 @@ class ClfWoInputLimitLagrangian:
     dVdx_times_g: np.ndarray
     # The Lagrangian
     rho_minus_V: sym.Polynomial
-
-    @classmethod
-    def construct(
-        cls,
-        prog: solvers.MathematicalProgram,
-        x_set: sym.Variables,
-        dVdx_times_f_degree: int,
-        dVdx_times_g_degrees: List[int],
-        rho_minus_V_degree: int,
-        x_equilibrium: np.ndarray,
-    ) -> Self:
-        """
-        Constructs the Lagrangians as SOS polynomials.
-        """
-        dVdx_times_f, _ = new_sos_polynomial(prog, x_set, dVdx_times_f_degree)
-        dVdx_times_g = np.array(
-            [
-                new_sos_polynomial(prog, x_set, degree)[0]
-                for degree in dVdx_times_g_degrees
-            ]
-        )
-        # We know that V(x_equilibrium) = 0 and dVdx at x_equilibrium is also
-        # 0. Hence by
-        # -(1+λ₀(x))*(∂V/∂x*f(x)+κ*V(x))−λ₁(x)*∂V/∂x*g(x)−λ₂(x)*(ρ−V(x))
-        # being sos, we know that λ₂(x_equilibrium) = 0.
-        # When x_equilibrium = 0, this means that λ₂(0) = 0. Since λ₂(x) is
-        # sos, we know that its monomial basis doesn't contain 1.
-        if rho_minus_V_degree == 0:
-            rho_minus_V = sym.Polynomial()
-        else:
-            if np.all(x_equilibrium == 0):
-                monomial_basis = sym.MonomialBasis(
-                    x_set, int(np.floor(rho_minus_V_degree / 2))
-                )
-                assert monomial_basis[-1].total_degree() == 0
-                rho_minus_V, _ = prog.NewSosPolynomial(monomial_basis[:-1])
-            else:
-                rho_minus_V, _ = prog.NewSosPolynomial(x_set, rho_minus_V_degree)
-        return ClfWoInputLimitLagrangian(dVdx_times_f, dVdx_times_g, rho_minus_V)
 
     def get_result(
         self,
@@ -87,6 +49,45 @@ class ClfWoInputLimitLagrangian:
             dVdx_times_g=dVdx_times_g_result,
             rho_minus_V=rho_minus_V_result,
         )
+
+
+@dataclass
+class ClfWoInputLimitLagrangianDegrees:
+    dVdx_times_f: int
+    dVdx_times_g: List[int]
+    rho_minus_V: int
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        x_equilibrium: np.ndarray,
+    ) -> ClfWoInputLimitLagrangian:
+        """
+        Constructs the Lagrangians as SOS polynomials.
+        """
+        dVdx_times_f, _ = new_sos_polynomial(prog, x_set, self.dVdx_times_f)
+        dVdx_times_g = np.array(
+            [prog.NewFreePolynomial(x_set, degree) for degree in self.dVdx_times_g]
+        )
+        # We know that V(x_equilibrium) = 0 and dVdx at x_equilibrium is also
+        # 0. Hence by
+        # -(1+λ₀(x))*(∂V/∂x*f(x)+κ*V(x))−λ₁(x)*∂V/∂x*g(x)−λ₂(x)*(ρ−V(x))
+        # being sos, we know that λ₂(x_equilibrium) = 0.
+        # When x_equilibrium = 0, this means that λ₂(0) = 0. Since λ₂(x) is
+        # sos, we know that its monomial basis doesn't contain 1.
+        if self.rho_minus_V == 0:
+            rho_minus_V = sym.Polynomial()
+        else:
+            if np.all(x_equilibrium == 0):
+                monomial_basis = sym.MonomialBasis(
+                    x_set, int(np.floor(self.rho_minus_V / 2))
+                )
+                assert monomial_basis[-1].total_degree() == 0
+                rho_minus_V, _ = prog.NewSosPolynomial(monomial_basis[:-1])
+            else:
+                rho_minus_V, _ = prog.NewSosPolynomial(x_set, self.rho_minus_V)
+        return ClfWoInputLimitLagrangian(dVdx_times_f, dVdx_times_g, rho_minus_V)
 
 
 @dataclass
@@ -114,6 +115,24 @@ class ClfWInputLimitLagrangian:
         return ClfWInputLimitLagrangian(
             V_minus_rho=V_minus_rho_result, Vdot=Vdot_result
         )
+
+
+@dataclass
+class ClfWInputLimitLagrangianDegrees:
+    V_minus_rho: int
+    Vdot: List[int]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        x_equilibrium: np.ndarray,
+    ) -> ClfWInputLimitLagrangian:
+        V_minus_rho, _ = new_sos_polynomial(prog, x_set, self.V_minus_rho)
+        Vdot = np.array(
+            [new_sos_polynomial(prog, x_set, degree) for degree in self.Vdot]
+        )
+        return ClfWInputLimitLagrangian(V_minus_rho, Vdot)
 
 
 class ControlLyapunov:
@@ -186,6 +205,28 @@ class ControlLyapunov:
         if u_vertices is not None:
             assert u_vertices.shape[1] == self.nu
         self.u_vertices = u_vertices
+
+    def search_lagrangian_given_clf(
+        self,
+        V: sym.Polynomial,
+        rho: float,
+        kappa: float,
+        lagrangian_degrees: Union[
+            ClfWInputLimitLagrangianDegrees, ClfWoInputLimitLagrangianDegrees
+        ],
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        coefficient_tol: Optional[float] = None,
+    ) -> Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian]:
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        lagrangians = lagrangian_degrees.to_lagrangians(
+            prog, self.x_set, self.x_equilibrium
+        )
+        self._add_clf_condition(prog, V, lagrangians, rho, kappa)
+        result = solve_with_id(prog, solver_id, solver_options)
+        assert result.is_success()
+        return lagrangians.get_result(result, coefficient_tol)
 
     def _add_clf_condition(
         self,

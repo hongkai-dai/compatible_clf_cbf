@@ -66,14 +66,14 @@ class TestClf:
         prog.AddIndeterminates(dut.x_set)
         V = self.get_V_init()
 
-        lagrangians = mut.ClfWoInputLimitLagrangian.construct(
-            prog,
-            dut.x_set,
-            dVdx_times_f_degree=2,
-            dVdx_times_g_degrees=[4, 4],
-            rho_minus_V_degree=4,
-            x_equilibrium=dut.x_equilibrium,
+        lagrangian_degrees = mut.ClfWoInputLimitLagrangianDegrees(
+            dVdx_times_f=2, dVdx_times_g=[4, 4], rho_minus_V=4
         )
+
+        lagrangians = lagrangian_degrees.to_lagrangians(
+            prog, dut.x_set, dut.x_equilibrium
+        )
+
         # The Lagrangian for rho-V doesn't contain constant or linear terms.
         assert (
             sym.Monomial()
@@ -99,3 +99,26 @@ class TestClf:
             - lagrangians.rho_minus_V * (rho - V)
         )
         assert condition.EqualTo(condition_expected)
+
+    def test_search_lagrangian_given_clf_wo_input_limit(self):
+        """
+        Test search_lagrangian_given_clf without input limits.
+        """
+        dut = mut.ControlLyapunov(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            x_equilibrium=np.zeros(self.nx),
+            u_vertices=None,
+        )
+        V = self.get_V_init()
+
+        lagrangians = dut.search_lagrangian_given_clf(
+            V,
+            rho=0.01,
+            kappa=0.001,
+            lagrangian_degrees=mut.ClfWoInputLimitLagrangianDegrees(
+                dVdx_times_f=2, dVdx_times_g=[3, 3], rho_minus_V=4
+            ),
+        )
+        assert isinstance(lagrangians, mut.ClfWoInputLimitLagrangian)
