@@ -215,20 +215,36 @@ def solve_with_id(
 
 
 def new_sos_polynomial(
-    prog: solvers.MathematicalProgram, x_set: sym.Variables, degree: int
+    prog: solvers.MathematicalProgram,
+    x_set: sym.Variables,
+    degree: int,
+    zero_at_origin: bool = False,
 ) -> Tuple[sym.Polynomial, np.ndarray]:
     """
     Returns a new SOS polynomial (where the coefficients are decision variables).
+
+    Args:
+      zero_at_origin: where this SOS polynomial sos_poly(0) = 0.
 
     Return:
       sos_poly: The newly constructed sos polynomial.
       gram: The Gram matrix of sos_poly.
     """
     if degree == 0:
-        coeff = prog.NewContinuousVariables(1)[0]
-        prog.AddBoundingBoxConstraint(0, np.inf, coeff)
-        sos_poly = sym.Polynomial({sym.Monomial(): sym.Expression(coeff)})
-        return sos_poly, np.array([[coeff]])
+        if zero_at_origin:
+            # This polynomial is a constant 0.
+            return sym.Polynomial(), np.array([[]])
+        else:
+            coeff = prog.NewContinuousVariables(1)[0]
+            prog.AddBoundingBoxConstraint(0, np.inf, coeff)
+            sos_poly = sym.Polynomial({sym.Monomial(): sym.Expression(coeff)})
+            return sos_poly, np.array([[coeff]])
     else:
-        sos_poly, gram = prog.NewSosPolynomial(x_set, degree)
+        if zero_at_origin:
+            # This polynomial cannot have constant or linear terms.
+            monomial_basis = sym.MonomialBasis(x_set, int(np.floor(degree / 2)))
+            assert monomial_basis[-1].total_degree() == 0
+            sos_poly, gram = prog.NewSosPolynomial(monomial_basis[:-1])
+        else:
+            sos_poly, gram = prog.NewSosPolynomial(x_set, degree)
         return sos_poly, gram
