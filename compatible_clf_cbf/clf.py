@@ -2,7 +2,7 @@
 Certify and search Control Lyapunov function (CLF) through sum-of-squares optimization.
 """
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 from typing_extensions import Self
 
 import numpy as np
@@ -76,17 +76,9 @@ class ClfWoInputLimitLagrangianDegrees:
         # being sos, we know that λ₂(x_equilibrium) = 0.
         # When x_equilibrium = 0, this means that λ₂(0) = 0. Since λ₂(x) is
         # sos, we know that its monomial basis doesn't contain 1.
-        if self.rho_minus_V == 0:
-            rho_minus_V = sym.Polynomial()
-        else:
-            if np.all(x_equilibrium == 0):
-                monomial_basis = sym.MonomialBasis(
-                    x_set, int(np.floor(self.rho_minus_V / 2))
-                )
-                assert monomial_basis[-1].total_degree() == 0
-                rho_minus_V, _ = prog.NewSosPolynomial(monomial_basis[:-1])
-            else:
-                rho_minus_V, _ = prog.NewSosPolynomial(x_set, self.rho_minus_V)
+        rho_minus_V, _ = new_sos_polynomial(
+            prog, x_set, self.rho_minus_V, bool(np.all(x_equilibrium == 0))
+        )
         return ClfWoInputLimitLagrangian(dVdx_times_f, dVdx_times_g, rho_minus_V)
 
 
@@ -227,6 +219,35 @@ class ControlLyapunov:
         result = solve_with_id(prog, solver_id, solver_options)
         assert result.is_success()
         return lagrangians.get_result(result, coefficient_tol)
+
+    def construct_search_clf_given_lagrangian(
+        self,
+        kappa: float,
+        V_degree: int,
+        lagrangians: Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian],
+    ) -> Tuple[solvers.MathematicalProgram, sym.Polynomial, sym.Variable]:
+        """
+        Construct a mathematical program to search for V given Lagrangians.
+
+        Impose the constraints
+        V is sos
+        V(x_equilibrium) = 0
+        ∀ x s.t V(x)≤ ρ, ∃ u∈𝒰, s.t V̇(x, u) <= −κ*V
+
+        Returns:
+          prog: The optimization program.
+          V: The CLF.
+          rho: The sub-level set is {x | V(x) <= rho}.
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        V, _ = new_sos_polynomial(
+            prog, self.x_set, V_degree, bool(np.all(self.x_equilibrium == 0))
+        )
+        rho = prog.NewContinuousVariables(1, "rho")[0]
+        prog.AddBoundingBoxConstraint(0, np.inf, rho)
+        self._add_clf_condition(prog, V, lagrangians, rho, kappa)
+        return prog, V, rho
 
     def _add_clf_condition(
         self,
