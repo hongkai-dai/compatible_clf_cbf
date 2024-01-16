@@ -232,6 +232,7 @@ class TestClfCbf(object):
                 mut.CompatibleLagrangianDegrees.Degree(x=4, y=2)
                 for _ in range(len(self.unsafe_regions))
             ],
+            state_eq_constraints=None,
         )
         rho = 0.001
         barrier_eps = np.array([0.01, 0.02])
@@ -286,6 +287,7 @@ class TestClfCbf(object):
             y=y_lagrangian,
             rho_minus_V=rho_minus_V_lagrangian,
             b_plus_eps=b_plus_eps_lagrangian,
+            state_eq_constraints=None,
         )
 
         rho = 0.1
@@ -335,6 +337,7 @@ class TestClfCbf(object):
         lagrangians = mut.UnsafeRegionLagrangians(
             cbf=sym.Polynomial(1 + self.x[0]),
             unsafe_region=np.array([sym.Polynomial(2 + self.x[0])]),
+            state_eq_constraints=None,
         )
 
         poly = dut._add_barrier_safe_constraint(
@@ -531,6 +534,7 @@ class TestClfCbfToy:
             y=None,
             rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
             b_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
+            state_eq_constraints=None,
         )
         rho = 0.01
 

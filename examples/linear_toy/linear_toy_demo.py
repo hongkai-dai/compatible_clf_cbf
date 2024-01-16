@@ -34,6 +34,7 @@ def search_compatible_lagrangians(
         ],
         rho_minus_V=None,
         b_plus_eps=None,
+        state_eq_constraints=None,
     )
     prog, lagrangians = dut.construct_search_compatible_lagrangians(
         V, b, kappa_V, kappa_b, lagrangian_degrees, rho=None, barrier_eps=None

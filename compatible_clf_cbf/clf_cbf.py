@@ -41,39 +41,9 @@ class CompatibleLagrangians:
     # The Lagrangian polynomials multiplies with b(x)+ε. Should be an array of SOS
     # polynomials.
     b_plus_eps: Optional[np.ndarray]
-
-    @classmethod
-    def reserve(
-        cls,
-        nu: int,
-        use_y_squared: bool,
-        y_size,
-        with_rho_minus_V: bool,
-        b_plus_eps_size: Optional[int],
-    ) -> Self:
-        """
-        Reserve the Lagrangian polynomials. Note that the polynomials are
-        initialized to 0, you should properly set their values.
-
-        Args:
-          nu: The dimension of control u.
-          use_y_squared: Check CompatibleClfCbf documentation.
-          y_size: The size of the indeterminates y.
-          with_rho_minus_V: Whether the psatz condition considers ρ - V.
-          b_plus_eps_size: The size of b(x)+ε. If set to None, then we don't consider
-          b(x)+ε in the psatz.
-        """
-        return CompatibleLagrangians(
-            lambda_y=np.array([sym.Polynomial() for _ in range(nu)]),
-            xi_y=sym.Polynomial(),
-            y=None
-            if use_y_squared
-            else np.array([sym.Polynomial() for _ in range(y_size)]),
-            rho_minus_V=sym.Polynomial() if with_rho_minus_V else None,
-            b_plus_eps=None
-            if b_plus_eps_size is None
-            else np.array([sym.Polynomial() for _ in range(b_plus_eps_size)]),
-        )
+    # The free Lagrangian polynomials multiplying the state equality
+    # constraints.
+    state_eq_constraints: Optional[np.ndarray]
 
     def get_result(
         self,
@@ -100,12 +70,18 @@ class CompatibleLagrangians:
             if self.b_plus_eps is not None
             else None
         )
+        state_eq_constraints_result = (
+            get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
+            if self.state_eq_constraints is not None
+            else None
+        )
         return CompatibleLagrangians(
             lambda_y=lambda_y_result,
             xi_y=xi_y_result,
             y=y_result,
             rho_minus_V=rho_minus_V_result,
             b_plus_eps=b_plus_eps_result,
+            state_eq_constraints=state_eq_constraints_result,
         )
 
 
@@ -153,6 +129,7 @@ class CompatibleLagrangianDegrees:
     y: Optional[List[Degree]]
     rho_minus_V: Optional[Degree]
     b_plus_eps: Optional[List[Degree]]
+    state_eq_constraints: Optional[List[Degree]]
 
     def initialize_lagrangians(
         self, prog: solvers.MathematicalProgram, x: sym.Variables, y: sym.Variables
@@ -186,12 +163,25 @@ class CompatibleLagrangianDegrees:
                 ]
             )
         )
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    state_eq_constraints_i.construct_polynomial(
+                        prog, x, y, is_sos=False
+                    )
+                    for state_eq_constraints_i in self.state_eq_constraints
+                ]
+            )
+        )
         return CompatibleLagrangians(
             lambda_y=lambda_y,
             xi_y=xi_y,
             y=y_lagrangian,
             rho_minus_V=rho_minus_V,
             b_plus_eps=b_plus_eps,
+            state_eq_constraints=state_eq_constraints,
         )
 
 
@@ -215,12 +205,20 @@ class UnsafeRegionLagrangians:
     # An array of sym.Polynomial. The Lagrangians that multiply the unsafe region
     # polynomials. ϕᵢ,ⱼ(x) in the documentation above.
     unsafe_region: np.ndarray
+    # The free Lagrangian that multiplies with the state equality constraints
+    # (such as sin²θ+cos²θ=1)
+    state_eq_constraints: Optional[np.ndarray]
 
     def get_result(self, result: solvers.MathematicalProgramResult) -> Self:
         return UnsafeRegionLagrangians(
             cbf=result.GetSolution(self.cbf),
             unsafe_region=np.array(
                 [result.GetSolution(phi) for phi in self.unsafe_region]
+            ),
+            state_eq_constraints=None
+            if self.state_eq_constraints is None
+            else np.array(
+                [result.GetSolution(poly) for poly in self.state_eq_constraints]
             ),
         )
 
@@ -259,6 +257,7 @@ class CompatibleClfCbf:
         bu: Optional[np.ndarray] = None,
         with_clf: bool = True,
         use_y_squared: bool = True,
+        state_eq_constraints: Optional[np.ndarray] = None,
     ):
         """
         Args:
@@ -294,6 +293,12 @@ class CompatibleClfCbf:
             {(x, y) | [y(0)²]ᵀ*[-∂b/∂x*g(x)] = 0, [y(0)²]ᵀ*[ ∂b/∂x*f(x)+κ_b*b(x)] = -1}       (2)
                       [y(1)²]  [ ∂V/∂x*g(x)]      [y(1)²]  [-∂V/∂x*f(x)-κ_V*V(x)]
             is empty.
+          state_eq_constraints: An array of polynomials. Some dynamical systems
+            have equality constraints on its states. For example, when the
+            state include sinθ and cosθ (so that the dynamics is a polynomial
+            function of state), we need to impose the equality constraint
+            sin²θ+cos²θ=1 on the state. state_eq_constraints[i] = 0 is an
+            equality constraint on the state.
 
           If both Au and bu are None, it means that we don't have input limits.
           They have to be both None or both not None.
@@ -334,6 +339,9 @@ class CompatibleClfCbf:
         self.y_squared_poly = np.array(
             [sym.Polynomial(sym.Monomial(self.y[i], 2)) for i in range(y_size)]
         )
+        self.state_eq_constraints = state_eq_constraints
+        if self.state_eq_constraints is not None:
+            check_array_of_polynomials(self.state_eq_constraints, self.x_set)
 
     def certify_cbf_unsafe_region(
         self,
@@ -341,6 +349,7 @@ class CompatibleClfCbf:
         cbf: sym.Polynomial,
         cbf_lagrangian_degree: int,
         unsafe_region_lagrangian_degrees: List[int],
+        state_eq_constraints_lagrangian_degrees: Optional[List[int]] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
     ) -> UnsafeRegionLagrangians:
         """
@@ -373,7 +382,21 @@ class CompatibleClfCbf:
                 for deg in unsafe_region_lagrangian_degrees
             ]
         )
-        lagrangians = UnsafeRegionLagrangians(cbf_lagrangian, unsafe_lagrangians)
+        if self.state_eq_constraints is not None:
+            assert state_eq_constraints_lagrangian_degrees is not None
+            state_eq_constraints_lagrangians = np.array(
+                [
+                    prog.NewFreePolynomial(self.x_set, deg)
+                    for deg in state_eq_constraints_lagrangian_degrees
+                ]
+            )
+        else:
+            state_eq_constraints_lagrangians = None
+        lagrangians = UnsafeRegionLagrangians(
+            cbf_lagrangian,
+            unsafe_lagrangians,
+            state_eq_constraints=state_eq_constraints_lagrangians,
+        )
         self._add_barrier_safe_constraint(prog, unsafe_region_index, cbf, lagrangians)
         result = solvers.Solve(prog, None, solver_options)
         assert result.is_success()
@@ -741,6 +764,10 @@ class CompatibleClfCbf:
             assert lagrangians.b_plus_eps is not None
             poly -= lagrangians.b_plus_eps.dot(barrier_eps + b)
 
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+
         prog.AddSosConstraint(poly)
         return poly
 
@@ -781,6 +808,9 @@ class CompatibleClfCbf:
         poly = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
             self.unsafe_regions[unsafe_region_index]
         )
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
         prog.AddSosConstraint(poly)
         return poly
 

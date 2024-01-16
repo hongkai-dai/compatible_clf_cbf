@@ -39,6 +39,7 @@ def main(use_y_squared: bool):
         ],
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
         b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
+        state_eq_constraints=None,
     )
     rho = 0.01
     barrier_eps = np.array([0.0001])

@@ -27,8 +27,10 @@ class ClfWoInputLimitLagrangian:
     dVdx_times_f: sym.Polynomial
     # The array of Lagrangians λ₁(x) in λ₁(x)*∂V/∂x*g(x)
     dVdx_times_g: np.ndarray
-    # The Lagrangian
+    # The Lagrangian for ρ − V(x)
     rho_minus_V: sym.Polynomial
+    # The array of Lagrangians for state equality constraints.
+    state_eq_constraints: Optional[np.ndarray]
 
     def get_result(
         self,
@@ -44,10 +46,18 @@ class ClfWoInputLimitLagrangian:
         rho_minus_V_result = get_polynomial_result(
             result, self.rho_minus_V, coefficient_tol
         )
+        state_eq_constraints_result = (
+            None
+            if self.state_eq_constraints is None
+            else get_polynomial_result(
+                result, self.state_eq_constraints, coefficient_tol
+            )
+        )
         return ClfWoInputLimitLagrangian(
             dVdx_times_f=dVdx_times_f_result,
             dVdx_times_g=dVdx_times_g_result,
             rho_minus_V=rho_minus_V_result,
+            state_eq_constraints=state_eq_constraints_result,
         )
 
 
@@ -56,6 +66,7 @@ class ClfWoInputLimitLagrangianDegrees:
     dVdx_times_f: int
     dVdx_times_g: List[int]
     rho_minus_V: int
+    state_eq_constraints: Optional[List[int]]
 
     def to_lagrangians(
         self,
@@ -79,7 +90,20 @@ class ClfWoInputLimitLagrangianDegrees:
         rho_minus_V, _ = new_sos_polynomial(
             prog, x_set, self.rho_minus_V, bool(np.all(x_equilibrium == 0))
         )
-        return ClfWoInputLimitLagrangian(dVdx_times_f, dVdx_times_g, rho_minus_V)
+
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    prog.NewFreePolynomial(x_set, degree)
+                    for degree in self.state_eq_constraints
+                ]
+            )
+        )
+        return ClfWoInputLimitLagrangian(
+            dVdx_times_f, dVdx_times_g, rho_minus_V, state_eq_constraints
+        )
 
 
 @dataclass
@@ -92,6 +116,8 @@ class ClfWInputLimitLagrangian:
     V_minus_rho: sym.Polynomial
     # The Lagrangians λᵢ(x) in ∑ᵢ λᵢ(x)*(∂V/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
     Vdot: np.ndarray
+    # The Lagrangians for state equality constraints
+    state_eq_constraints: Optional[np.ndarray]
 
     def get_result(
         self,
@@ -104,8 +130,17 @@ class ClfWInputLimitLagrangian:
         Vdot_result: np.ndarray = get_polynomial_result(
             result, self.Vdot, coefficient_tol
         )
+        state_eq_constraints_result = (
+            None
+            if self.state_eq_constraints is None
+            else get_polynomial_result(
+                result, self.state_eq_constraints, coefficient_tol
+            )
+        )
         return ClfWInputLimitLagrangian(
-            V_minus_rho=V_minus_rho_result, Vdot=Vdot_result
+            V_minus_rho=V_minus_rho_result,
+            Vdot=Vdot_result,
+            state_eq_constraints=state_eq_constraints_result,
         )
 
 
@@ -113,6 +148,7 @@ class ClfWInputLimitLagrangian:
 class ClfWInputLimitLagrangianDegrees:
     V_minus_rho: int
     Vdot: List[int]
+    state_eq_constraints: Optional[List[int]]
 
     def to_lagrangians(
         self,
@@ -124,7 +160,17 @@ class ClfWInputLimitLagrangianDegrees:
         Vdot = np.array(
             [new_sos_polynomial(prog, x_set, degree) for degree in self.Vdot]
         )
-        return ClfWInputLimitLagrangian(V_minus_rho, Vdot)
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    prog.NewFreePolynomial(x_set, degree)
+                    for degree in self.state_eq_constraints
+                ]
+            )
+        )
+        return ClfWInputLimitLagrangian(V_minus_rho, Vdot, state_eq_constraints)
 
 
 class ControlLyapunov:
@@ -162,6 +208,7 @@ class ControlLyapunov:
         x: np.ndarray,
         x_equilibrium: np.ndarray,
         u_vertices: Optional[np.ndarray] = None,
+        state_eq_constraints: Optional[np.ndarray] = None,
     ):
         """
         Args:
@@ -178,6 +225,12 @@ class ControlLyapunov:
             as the equilibrium state.
           u_vertices: The vertices of the input constraint polytope 𝒰. Each row
             is a vertex. If u_vertices=None, then the input is unconstrained.
+          state_eq_constraints: An array of polynomials. Some dynamical systems
+            have equality constraints on its states. For example, when the
+            state include sinθ and cosθ (so that the dynamics is a polynomial
+            function of state), we need to impose the equality constraint
+            sin²θ+cos²θ=1 on the state. state_eq_constraints[i] = 0 is an
+            equality constraint on the state.
 
         """
         assert len(f.shape) == 1
@@ -197,6 +250,9 @@ class ControlLyapunov:
         if u_vertices is not None:
             assert u_vertices.shape[1] == self.nu
         self.u_vertices = u_vertices
+        if state_eq_constraints is not None:
+            check_array_of_polynomials(state_eq_constraints, self.x_set)
+        self.state_eq_constraints = state_eq_constraints
 
     def search_lagrangian_given_clf(
         self,
@@ -267,12 +323,14 @@ class ControlLyapunov:
                 - dVdx_times_g.squeeze().dot(lagrangians.dVdx_times_g)
                 - lagrangians.rho_minus_V * (rho - V)
             )
-            prog.AddSosConstraint(sos_poly)
         else:
             assert isinstance(lagrangians, ClfWInputLimitLagrangian)
             Vdot = dVdx_times_f + dVdx_times_g @ self.u_vertices
             sos_poly = (1 + lagrangians.V_minus_rho) * (V - rho) * sym.Polynomial(
                 self.x.dot(self.x)
             ) - lagrangians.Vdot.dot(Vdot + kappa * V)
-            prog.AddSosConstraint(sos_poly)
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            sos_poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        prog.AddSosConstraint(sos_poly)
         return sos_poly
