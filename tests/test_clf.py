@@ -67,7 +67,10 @@ class TestClf:
         V = self.get_V_init()
 
         lagrangian_degrees = mut.ClfWoInputLimitLagrangianDegrees(
-            dVdx_times_f=2, dVdx_times_g=[4, 4], rho_minus_V=4
+            dVdx_times_f=2,
+            dVdx_times_g=[4, 4],
+            rho_minus_V=4,
+            state_eq_constraints=None,
         )
 
         lagrangians = lagrangian_degrees.to_lagrangians(
@@ -118,7 +121,10 @@ class TestClf:
             rho=0.01,
             kappa=0.001,
             lagrangian_degrees=mut.ClfWoInputLimitLagrangianDegrees(
-                dVdx_times_f=2, dVdx_times_g=[3, 3], rho_minus_V=4
+                dVdx_times_f=2,
+                dVdx_times_g=[3, 3],
+                rho_minus_V=4,
+                state_eq_constraints=None,
             ),
         )
         assert isinstance(lagrangians, mut.ClfWoInputLimitLagrangian)
