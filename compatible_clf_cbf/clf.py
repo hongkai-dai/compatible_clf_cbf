@@ -198,6 +198,9 @@ class ControlLyapunov:
     By positivestellasatz, we have
     (1+λ₀(x))(V(x)−ρ)xᵀx − ∑ᵢ λᵢ(x)*(∂V/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
     λ₀(x), λᵢ(x) are sos.
+
+    See Convex Synthesis and Verification of Control-Lyapunov and Barrier
+    Functions with Input Constraints, Hongkai Dai and Frank Permenter, 2023.
     """
 
     def __init__(

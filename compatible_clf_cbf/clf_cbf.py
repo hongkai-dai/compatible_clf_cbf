@@ -800,7 +800,7 @@ class CompatibleClfCbf:
             unsafe region self.unsafe_regions[unsafe_region_index].
           lagrangians: A array of polynomials, ϕᵢ(x) in the documentation above.
         Returns:
-          poly: poly is the polynomial -1-ϕᵢ,₀(x)bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
+          poly: poly is the polynomial -(1+ϕᵢ,₀(x))bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
         """
         assert lagrangians.unsafe_region.size == len(
             self.unsafe_regions[unsafe_region_index]
