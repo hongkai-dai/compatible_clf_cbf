@@ -947,14 +947,24 @@ class CompatibleClfCbf:
             )
             assert V is not None
             assert rho is not None
-            V_contain_lagrangian.add_constraint(prog, ellipsoid, V - rho)
+            V_contain_lagrangian.add_constraint(
+                prog,
+                inner_ineq_poly=np.array([ellipsoid]),
+                inner_eq_poly=np.array([]),
+                outer_poly=V - rho,
+            )
         b_contain_lagrangians = [
             degree.construct_lagrangian(prog, self.x_set)
             for degree in b_contain_lagrangian_degree
         ]
 
         for i in range(len(b_contain_lagrangians)):
-            b_contain_lagrangians[i].add_constraint(prog, ellipsoid, -b[i])
+            b_contain_lagrangians[i].add_constraint(
+                prog,
+                inner_ineq_poly=np.array([ellipsoid]),
+                inner_eq_poly=np.array([]),
+                outer_poly=-b[i],
+            )
 
         # Make sure x_inner_init is inside V(x) <= rho and b(x) >= 0.
         env_inner_init = {self.x[i]: x_inner_init[i] for i in range(self.nx)}
@@ -1019,7 +1029,7 @@ class CompatibleClfCbf:
         if V is not None:
             V_degree = V.TotalDegree()
             ellipsoid_in_V_lagrangian_degree = ContainmentLagrangianDegree(
-                inner=V_degree - 2, outer=-1
+                inner_ineq=[V_degree - 2], inner_eq=[], outer=-1
             )
             ellipsoid_in_V_lagrangian = (
                 ellipsoid_in_V_lagrangian_degree.construct_lagrangian(prog, self.x_set)
@@ -1027,17 +1037,21 @@ class CompatibleClfCbf:
             assert rho is not None
             ellipsoid_in_V_lagrangian.add_constraint(
                 prog,
-                inner_poly=ellipsoid_poly,
+                inner_ineq_poly=np.array([ellipsoid_poly]),
+                inner_eq_poly=np.array([]),
                 outer_poly=V - sym.Polynomial({sym.Monomial(): sym.Expression(rho)}),
             )
         for i in range(b.size):
             b_degree = b[i].TotalDegree()
             ellipsoid_in_b_lagrangian_degree = ContainmentLagrangianDegree(
-                inner=b_degree - 2, outer=-1
+                inner_ineq=[b_degree - 2], inner_eq=[], outer=-1
             )
             ellipsoid_in_b_lagrangian = (
                 ellipsoid_in_b_lagrangian_degree.construct_lagrangian(prog, self.x_set)
             )
             ellipsoid_in_b_lagrangian.add_constraint(
-                prog, inner_poly=ellipsoid_poly, outer_poly=-b[i]
+                prog,
+                inner_ineq_poly=np.array([ellipsoid_poly]),
+                inner_eq_poly=np.array([]),
+                outer_poly=-b[i],
             )

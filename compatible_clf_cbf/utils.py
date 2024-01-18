@@ -1,5 +1,6 @@
 import dataclasses
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
+from typing_extensions import Self
 import numpy as np
 
 import pydrake.symbolic as sym
@@ -132,22 +133,37 @@ def add_log_det_lower(
 @dataclasses.dataclass
 class ContainmentLagrangian:
     """
-    To certify that an algebraic set { x | f(x) <= 0} is contained in another
-    algebraic set {x | g(x) <= 0}, we impose the condition
-    -(1 + ϕ₁(x))g(x) + ϕ₂(x)f(x) is sos
+    To certify that an algebraic set { x | f(x) <= 0, g(x)=0} is contained in another
+    algebraic set {x | h(x) <= 0}, we impose the condition
+    -(1 + ϕ₁(x))h(x) + ϕ₂(x)f(x) + ϕ₃(x)*g(x) is sos
     ϕ₁(x) is sos, ϕ₂(x) is sos
     """
 
-    # ϕ₂(x) in the documentation above.
-    inner: sym.Polynomial
+    # ϕ₂(x) in the documentation above, an array of polynomials.
+    inner_ineq: np.ndarray
+    # ϕ₃(x) in the documentation above, an array of polynomials.
+    inner_eq: np.ndarray
     # ϕ₁(x) in the documentation above.
     outer: sym.Polynomial
 
     def add_constraint(
-        self, prog, inner_poly: sym.Polynomial, outer_poly: sym.Polynomial
+        self,
+        prog,
+        inner_ineq_poly: np.ndarray,
+        inner_eq_poly: np.ndarray,
+        outer_poly: sym.Polynomial,
     ) -> Tuple[sym.Polynomial, np.ndarray]:
         return prog.AddSosConstraint(
-            -(1 + self.outer) * outer_poly + self.inner * inner_poly
+            -(1 + self.outer) * outer_poly
+            + self.inner_ineq.dot(inner_ineq_poly)
+            + self.inner_eq.dot(inner_eq_poly)
+        )
+
+    def get_result(self, result: solvers.MathematicalProgramResult) -> Self:
+        return ContainmentLagrangian(
+            inner_ineq=get_polynomial_result(result, self.inner_ineq),
+            inner_eq=get_polynomial_result(result, self.inner_eq),
+            outer=get_polynomial_result(result, self.outer),
         )
 
 
@@ -158,36 +174,42 @@ class ContainmentLagrangianDegree:
     If degree < 0, then the Lagrangian polynomial is 1.
     """
 
-    inner: int = -1
-    outer: int = -1
+    inner_ineq: List[int]
+    inner_eq: List[int]
+    outer: int
 
     def construct_lagrangian(
         self, prog: solvers.MathematicalProgram, x: sym.Variables
     ) -> ContainmentLagrangian:
-        if self.inner < 0:
-            inner_lagrangian = sym.Polynomial(1)
-        elif self.inner == 0:
-            inner_lagrangian_var = prog.NewContinuousVariables(1)[0]
-            prog.AddBoundingBoxConstraint(0, np.inf, inner_lagrangian_var)
-            inner_lagrangian = sym.Polynomial(
-                {sym.Monomial(): sym.Expression(inner_lagrangian_var)}
-            )
-        else:
-            inner_lagrangian, _ = prog.NewSosPolynomial(x, self.inner)
+        inner_ineq_lagrangians = [None] * len(self.inner_ineq)
+        inner_eq_lagrangians = [None] * len(self.inner_eq)
+        for i, inner_ineq_i in enumerate(self.inner_ineq):
+            if inner_ineq_i < 0:
+                inner_ineq_lagrangians[i] = sym.Polynomial(1)
+            else:
+                inner_ineq_lagrangians[i] = new_sos_polynomial(prog, x, inner_ineq_i)[0]
+        inner_ineq_lagrangians = np.array(inner_ineq_lagrangians)
+
+        for i, inner_eq_i in enumerate(self.inner_eq):
+            if inner_eq_i < 0:
+                raise Exception(
+                    f"inner_eq[{i}] = {inner_eq_i}, should be non-negative."
+                )
+            else:
+                inner_eq_lagrangians[i] = prog.NewFreePolynomial(x, inner_eq_i)
+        inner_eq_lagrangians = np.array(inner_eq_lagrangians)
         if self.outer < 0:
             # The Lagrangian multiply with the outer set is
             # (1 + outer_lagrangian), hence we can set outer_lagrangian = 0,
             # such that the multiplied Lagrangian is 1.
             outer_lagrangian = sym.Polynomial(0)
-        elif self.outer == 0:
-            outer_lagrangian_var = prog.NewContinuousVariables(1)[0]
-            prog.AddBoundingBoxConstraint(0, np.inf, outer_lagrangian_var)
-            outer_lagrangian = sym.Polynomial(
-                {sym.Monomial(): sym.Expression(outer_lagrangian_var)}
-            )
         else:
-            outer_lagrangian, _ = prog.NewSosPolynomial(x, self.outer)
-        return ContainmentLagrangian(inner=inner_lagrangian, outer=outer_lagrangian)
+            outer_lagrangian = new_sos_polynomial(prog, x, self.outer)[0]
+        return ContainmentLagrangian(
+            inner_ineq=inner_ineq_lagrangians,
+            inner_eq=inner_eq_lagrangians,
+            outer=outer_lagrangian,
+        )
 
 
 def to_lower_triangular_columns(mat: np.ndarray) -> np.ndarray:

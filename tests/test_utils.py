@@ -41,38 +41,75 @@ def test_to_lower_triangular_columns():
 
 
 class TestContainmentLagrangian:
-    @pytest.mark.parametrize("inner_degree,outer_degree", [(0, 0), (0, -1), (-1, 0)])
-    def test_add_constraint1(self, inner_degree, outer_degree):
+    @pytest.mark.parametrize(
+        "inner_ineq_degree,outer_degree", [([0], 0), ([0], -1), ([-1], 0)]
+    )
+    def test_add_constraint1(self, inner_ineq_degree, outer_degree):
         x = sym.MakeVectorContinuousVariable(2, "x")
         x_set = sym.Variables(x)
-        inner_poly = sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1)
+        inner_ineq_poly = np.array([sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1)])
         outer_poly = sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1.01)
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(x_set)
         containment_lagrangian_degree = mut.ContainmentLagrangianDegree(
-            inner=inner_degree, outer=outer_degree
+            inner_ineq=inner_ineq_degree, inner_eq=[], outer=outer_degree
         )
-        lagrangian = containment_lagrangian_degree.construct_lagrangian(prog, x_set)
-        dut = mut.ContainmentLagrangian(inner=lagrangian.inner, outer=lagrangian.outer)
-        dut.add_constraint(prog, inner_poly, outer_poly)
+        lagrangians = containment_lagrangian_degree.construct_lagrangian(prog, x_set)
+        lagrangians.add_constraint(
+            prog, inner_ineq_poly, inner_eq_poly=np.array([]), outer_poly=outer_poly
+        )
         result = solvers.Solve(prog)
         assert result.is_success()
 
-    @pytest.mark.parametrize("inner_degree,outer_degree", [(0, 0), (0, -1), (-1, 0)])
-    def test_add_constraint2(self, inner_degree, outer_degree):
+    @pytest.mark.parametrize(
+        "inner_ineq_degree,outer_degree", [([0], 0), ([0], -1), ([-1], 0)]
+    )
+    def test_add_constraint2(self, inner_ineq_degree, outer_degree):
         # The inner_poly sub-level set is larger than the outer_poly sub-level
         # set. The program should fail.
         x = sym.MakeVectorContinuousVariable(2, "x")
         x_set = sym.Variables(x)
-        inner_poly = sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1.01)
+        inner_ineq_poly = np.array([sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1.01)])
         outer_poly = sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1.0)
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(x_set)
         containment_lagrangian_degree = mut.ContainmentLagrangianDegree(
-            inner=inner_degree, outer=outer_degree
+            inner_ineq=inner_ineq_degree, inner_eq=[], outer=outer_degree
         )
-        lagrangian = containment_lagrangian_degree.construct_lagrangian(prog, x_set)
-        dut = mut.ContainmentLagrangian(inner=lagrangian.inner, outer=lagrangian.outer)
-        dut.add_constraint(prog, inner_poly, outer_poly)
+        lagrangians = containment_lagrangian_degree.construct_lagrangian(prog, x_set)
+        lagrangians.add_constraint(
+            prog, inner_ineq_poly, inner_eq_poly=np.array([]), outer_poly=outer_poly
+        )
         result = solvers.Solve(prog)
         assert not result.is_success()
+
+    def test_add_constraint3(self):
+        """
+        The inner algebraic set has multiple polynomials, with both equalities
+        and inequalities.
+        """
+        x = sym.MakeVectorContinuousVariable(2, "x")
+        x_set = sym.Variables(x)
+        inner_ineq_poly = np.array(
+            [
+                sym.Polynomial(x[0] ** 2 + x[1] ** 2 - 1),
+                sym.Polynomial(0.5 - x[0] ** 2 - 2 * x[1] ** 2),
+            ]
+        )
+        inner_eq_poly = np.array([sym.Polynomial(x[0] + x[1])])
+        outer_poly = sym.Polynomial(x[0] ** 2 + 0.5 * x[1] ** 2 - 1)
+
+        lagrangian_degrees = mut.ContainmentLagrangianDegree(
+            inner_ineq=[0, 0], inner_eq=[1], outer=0
+        )
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(x_set)
+        lagrangians = lagrangian_degrees.construct_lagrangian(prog, x_set)
+        lagrangians.add_constraint(prog, inner_ineq_poly, inner_eq_poly, outer_poly)
+        result = solvers.Solve(prog)
+        assert result.is_success()
+        lagrangians_result = lagrangians.get_result(result)
+        assert lagrangians_result.inner_ineq[0].TotalDegree() == 0
+        assert lagrangians_result.inner_ineq[1].TotalDegree() == 0
+        assert lagrangians_result.inner_eq[0].TotalDegree() == 1
+        assert lagrangians_result.outer.TotalDegree() == 0
