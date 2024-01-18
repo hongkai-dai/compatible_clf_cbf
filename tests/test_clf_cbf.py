@@ -392,10 +392,10 @@ class TestClfCbf(object):
             b,
             rho,
             V_contain_lagrangian_degree=utils.ContainmentLagrangianDegree(
-                inner=-1, outer=0
+                inner_ineq=[-1], inner_eq=[], outer=0
             ),
             b_contain_lagrangian_degree=[
-                utils.ContainmentLagrangianDegree(inner=-1, outer=0)
+                utils.ContainmentLagrangianDegree(inner_ineq=[-1], inner_eq=[], outer=0)
             ],
             x_inner_init=np.linalg.solve(S_ellipsoid, b_ellipsoid) / -2,
             max_iter=10,
@@ -638,10 +638,10 @@ class TestClfCbfToy:
             b,
             rho,
             V_contain_lagrangian_degree=mut.ContainmentLagrangianDegree(
-                inner=-1, outer=0
+                inner_ineq=[-1], inner_eq=[], outer=0
             ),
             b_contain_lagrangian_degree=[
-                mut.ContainmentLagrangianDegree(inner=-1, outer=0)
+                mut.ContainmentLagrangianDegree(inner_ineq=[-1], inner_eq=[], outer=0)
             ],
             x_inner_init=x_equilibrium,
             max_iter=10,
@@ -692,10 +692,10 @@ class TestClfCbfToy:
             b_init,
             rho_init,
             V_contain_lagrangian_degree=mut.ContainmentLagrangianDegree(
-                inner=-1, outer=0
+                inner_ineq=[-1], inner_eq=[], outer=0
             ),
             b_contain_lagrangian_degree=[
-                mut.ContainmentLagrangianDegree(inner=-1, outer=0)
+                mut.ContainmentLagrangianDegree(inner_ineq=[-1], inner_eq=[], outer=0)
             ],
             x_inner_init=x_equilibrium,
             max_iter=10,
