@@ -78,7 +78,7 @@ class TestContainmentLagrangian:
         )
         lagrangians = containment_lagrangian_degree.construct_lagrangian(prog, x_set)
         lagrangians.add_constraint(
-            prog, inner_ineq_poly, inner_eq_poly=np.array([]), outer_poly=outer_poly
+            prog, inner_ineq_poly, inner_eq_poly=None, outer_poly=outer_poly
         )
         result = solvers.Solve(prog)
         assert not result.is_success()
