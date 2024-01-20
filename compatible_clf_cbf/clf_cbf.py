@@ -950,7 +950,7 @@ class CompatibleClfCbf:
             V_contain_lagrangian.add_constraint(
                 prog,
                 inner_ineq_poly=np.array([ellipsoid]),
-                inner_eq_poly=np.array([]),
+                inner_eq_poly=self.state_eq_constraints,
                 outer_poly=V - rho,
             )
         b_contain_lagrangians = [
@@ -962,7 +962,7 @@ class CompatibleClfCbf:
             b_contain_lagrangians[i].add_constraint(
                 prog,
                 inner_ineq_poly=np.array([ellipsoid]),
-                inner_eq_poly=np.array([]),
+                inner_eq_poly=self.state_eq_constraints,
                 outer_poly=-b[i],
             )
 
@@ -1028,8 +1028,15 @@ class CompatibleClfCbf:
         )
         if V is not None:
             V_degree = V.TotalDegree()
+            inner_eq_lagrangian_degree = (
+                []
+                if self.state_eq_constraints is None
+                else [
+                    V_degree - poly.TotalDegree() for poly in self.state_eq_constraints
+                ]
+            )
             ellipsoid_in_V_lagrangian_degree = ContainmentLagrangianDegree(
-                inner_ineq=[V_degree - 2], inner_eq=[], outer=-1
+                inner_ineq=[V_degree - 2], inner_eq=inner_eq_lagrangian_degree, outer=-1
             )
             ellipsoid_in_V_lagrangian = (
                 ellipsoid_in_V_lagrangian_degree.construct_lagrangian(prog, self.x_set)
@@ -1038,13 +1045,20 @@ class CompatibleClfCbf:
             ellipsoid_in_V_lagrangian.add_constraint(
                 prog,
                 inner_ineq_poly=np.array([ellipsoid_poly]),
-                inner_eq_poly=np.array([]),
+                inner_eq_poly=self.state_eq_constraints,
                 outer_poly=V - sym.Polynomial({sym.Monomial(): sym.Expression(rho)}),
             )
         for i in range(b.size):
             b_degree = b[i].TotalDegree()
+            inner_eq_lagrangian_degree = (
+                []
+                if self.state_eq_constraints is None
+                else [
+                    b_degree - poly.TotalDegree() for poly in self.state_eq_constraints
+                ]
+            )
             ellipsoid_in_b_lagrangian_degree = ContainmentLagrangianDegree(
-                inner_ineq=[b_degree - 2], inner_eq=[], outer=-1
+                inner_ineq=[b_degree - 2], inner_eq=inner_eq_lagrangian_degree, outer=-1
             )
             ellipsoid_in_b_lagrangian = (
                 ellipsoid_in_b_lagrangian_degree.construct_lagrangian(prog, self.x_set)
@@ -1052,6 +1066,6 @@ class CompatibleClfCbf:
             ellipsoid_in_b_lagrangian.add_constraint(
                 prog,
                 inner_ineq_poly=np.array([ellipsoid_poly]),
-                inner_eq_poly=np.array([]),
+                inner_eq_poly=self.state_eq_constraints,
                 outer_poly=-b[i],
             )

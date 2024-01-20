@@ -150,14 +150,17 @@ class ContainmentLagrangian:
         self,
         prog,
         inner_ineq_poly: np.ndarray,
-        inner_eq_poly: np.ndarray,
+        inner_eq_poly: Optional[np.ndarray],
         outer_poly: sym.Polynomial,
     ) -> Tuple[sym.Polynomial, np.ndarray]:
-        return prog.AddSosConstraint(
-            -(1 + self.outer) * outer_poly
-            + self.inner_ineq.dot(inner_ineq_poly)
-            + self.inner_eq.dot(inner_eq_poly)
+        sos_condition = -(1 + self.outer) * outer_poly + self.inner_ineq.dot(
+            inner_ineq_poly
         )
+        if inner_eq_poly is None:
+            assert self.inner_eq is None or self.inner_eq.size == 0
+        else:
+            sos_condition += self.inner_eq.dot(inner_eq_poly)
+        return prog.AddSosConstraint(sos_condition)
 
     def get_result(self, result: solvers.MathematicalProgramResult) -> Self:
         return ContainmentLagrangian(

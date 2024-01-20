@@ -730,3 +730,127 @@ class TestClfCbfToy:
         # with the i'th unsafe region.
         x_samples = 5 * np.random.randn(1000, 2) - np.array([[5, 0]])
         self.check_unsafe_region_by_sample(b, x_samples)
+
+
+class TestClfCbfWStateEqConstraints:
+    """
+    Test finding CLF/CBF for system with equality constraints on the state.
+
+    The system dynamics is
+    ẋ₀ = (x₁+1)u,
+    ẋ₁ = −x₀u,
+    ẋ₂ = −x₀−u
+    with the constraints x₀² + (x₁+1)² = 1
+    """
+
+    @classmethod
+    def setup_class(cls):
+        cls.nx = 3
+        cls.nu = 1
+        cls.x = sym.MakeVectorContinuousVariable(3, "x")
+        cls.f = np.array(
+            [sym.Polynomial(), sym.Polynomial(), sym.Polynomial(-cls.x[0])]
+        )
+        cls.g = np.array(
+            [
+                [sym.Polynomial(cls.x[1] + 1)],
+                [sym.Polynomial(-cls.x[0])],
+                [sym.Polynomial(-1)],
+            ]
+        )
+        cls.unsafe_regions = [
+            np.array([sym.Polynomial(cls.x[0] + cls.x[1] + cls.x[2] + 3)])
+        ]
+        cls.state_eq_constraints = np.array(
+            [sym.Polynomial(cls.x[0] ** 2 + cls.x[1] ** 2 + 2 * cls.x[1])]
+        )
+        cls.kappa_V = 0.001
+        cls.kappa_b = np.array([cls.kappa_V])
+        cls.barrier_eps = np.array([0.01])
+
+    def search_lagrangians(
+        self, check_result=False
+    ) -> Tuple[
+        mut.CompatibleClfCbf,
+        mut.CompatibleLagrangians,
+        List[mut.UnsafeRegionLagrangians],
+        sym.Polynomial,
+        np.ndarray,
+        float,
+    ]:
+        use_y_squared = True
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=None,
+            bu=None,
+            with_clf=True,
+            use_y_squared=use_y_squared,
+            state_eq_constraints=self.state_eq_constraints,
+        )
+        V_init = sym.Polynomial(self.x[0] ** 2 + self.x[1] ** 2 + self.x[2] ** 2)
+        b_init = np.array(
+            [sym.Polynomial(0.001 - self.x[0] ** 2 - self.x[1] ** 2 - self.x[2] ** 2)]
+        )
+
+        lagrangian_degrees = mut.CompatibleLagrangianDegrees(
+            lambda_y=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
+            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+            y=None,
+            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+            b_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+            state_eq_constraints=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        )
+        rho = 0.01
+
+        (
+            compatible_prog,
+            compatible_lagrangians,
+        ) = dut.construct_search_compatible_lagrangians(
+            V_init,
+            b_init,
+            self.kappa_V,
+            self.kappa_b,
+            lagrangian_degrees,
+            rho,
+            self.barrier_eps,
+        )
+        solver_options = solvers.SolverOptions()
+        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
+        compatible_result = solvers.Solve(compatible_prog, None, solver_options)
+        assert compatible_result.is_success()
+        compatible_lagrangians_result = compatible_lagrangians.get_result(
+            compatible_result, coefficient_tol=1e-5
+        )
+
+        unsafe_lagrangians = [
+            dut.certify_cbf_unsafe_region(
+                unsafe_region_index=0,
+                cbf=b_init[0],
+                cbf_lagrangian_degree=0,
+                unsafe_region_lagrangian_degrees=[0],
+                state_eq_constraints_lagrangian_degrees=[0],
+                solver_options=None,
+            )
+        ]
+        if check_result:
+            assert utils.is_sos(
+                -(1 + unsafe_lagrangians[0].cbf) * b_init[0]
+                + unsafe_lagrangians[0].unsafe_region.dot(self.unsafe_regions[0])
+                - unsafe_lagrangians[0].state_eq_constraints.dot(
+                    self.state_eq_constraints
+                )
+            )
+        return (
+            dut,
+            compatible_lagrangians_result,
+            unsafe_lagrangians,
+            V_init,
+            b_init,
+            rho,
+        )
+
+    def test_search_lagrangians(self):
+        self.search_lagrangians(check_result=True)
