@@ -32,3 +32,27 @@ def affine_dynamics(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         g = np.array([[1], [-1]])
 
     return (f, g)
+
+
+def affine_trig_poly_state_constraints(x: np.ndarray) -> sym.Polynomial:
+    """
+    With the state x̅ = [sinx₀, cosx₀−1, x₁], the state constraint is x̅₀² + (x̅₁+1)²=1
+    """
+    return sym.Polynomial(x[0] ** 2 + x[1] ** 2 + 2 * x[1])
+
+
+def affine_trig_poly_dynamics(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    With the trigonometric state x̅ = [sinx₀, cosx₀−1, x₁], we can write the
+    dynamics as affine form f(x̅) + g(x̅)u
+    """
+    assert x.shape == (3,)
+    if x.dtype == object:
+        f = np.array([sym.Polynomial(), sym.Polynomial(), sym.Polynomial(-x[0])])
+        g = np.array(
+            [[sym.Polynomial(x[1] + 1)], [sym.Polynomial(-x[0])], [sym.Polynomial(-1)]]
+        )
+    else:
+        f = np.array([0, 0, -x[0]])
+        g = np.array([[x[1] + 1], [-x[0]], [-1]])
+    return f, g
