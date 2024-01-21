@@ -361,8 +361,13 @@ class TestClfCbf(object):
         )
 
         cbf = sym.Polynomial(1 - self.x.dot(self.x))
+        unsafe_region_lagrangian_degrees = mut.UnsafeRegionLagrangianDegrees(
+            cbf=2, unsafe_region=[2], state_eq_constraints=None
+        )
         lagrangians = dut.certify_cbf_unsafe_region(
-            0, cbf, cbf_lagrangian_degree=2, unsafe_region_lagrangian_degrees=[2]
+            0,
+            cbf,
+            unsafe_region_lagrangian_degrees,
         )
         assert utils.is_sos(lagrangians.cbf)
         for i in range(dut.unsafe_regions[0].size):
@@ -557,13 +562,15 @@ class TestClfCbfToy:
         compatible_lagrangians_result = compatible_lagrangians.get_result(
             compatible_result, coefficient_tol=1e-5
         )
+        unsafe_region_lagrangian_degrees = mut.UnsafeRegionLagrangianDegrees(
+            cbf=0, unsafe_region=[0], state_eq_constraints=None
+        )
 
         unsafe_lagrangians = [
             dut.certify_cbf_unsafe_region(
                 unsafe_region_index=0,
                 cbf=b_init[0],
-                cbf_lagrangian_degree=0,
-                unsafe_region_lagrangian_degrees=[0],
+                lagrangian_degrees=unsafe_region_lagrangian_degrees,
                 solver_options=None,
             )
         ]
@@ -825,13 +832,15 @@ class TestClfCbfWStateEqConstraints:
             compatible_result, coefficient_tol=None
         )
 
+        unsafe_region_lagrangian_degrees = mut.UnsafeRegionLagrangianDegrees(
+            cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+        )
+
         unsafe_lagrangians = [
             dut.certify_cbf_unsafe_region(
                 unsafe_region_index=0,
                 cbf=b_init[0],
-                cbf_lagrangian_degree=0,
-                unsafe_region_lagrangian_degrees=[0],
-                state_eq_constraints_lagrangian_degrees=[0],
+                lagrangian_degrees=unsafe_region_lagrangian_degrees,
                 solver_options=None,
             )
         ]

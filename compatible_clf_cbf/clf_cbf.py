@@ -132,7 +132,7 @@ class CompatibleLagrangianDegrees:
     b_plus_eps: Optional[List[Degree]]
     state_eq_constraints: Optional[List[Degree]]
 
-    def initialize_lagrangians(
+    def to_lagrangians(
         self, prog: solvers.MathematicalProgram, x: sym.Variables, y: sym.Variables
     ) -> CompatibleLagrangians:
         lambda_y = np.array(
@@ -221,6 +221,41 @@ class UnsafeRegionLagrangians:
             else np.array(
                 [result.GetSolution(poly) for poly in self.state_eq_constraints]
             ),
+        )
+
+
+@dataclass
+class UnsafeRegionLagrangianDegrees:
+    cbf: int
+    unsafe_region: List[int]
+    state_eq_constraints: Optional[List[int]]
+
+    def to_lagrangians(
+        self, prog: solvers.MathematicalProgram, x_set: sym.Variables
+    ) -> UnsafeRegionLagrangians:
+        cbf, _ = new_sos_polynomial(prog, x_set, self.cbf)
+
+        unsafe_region = np.array(
+            [
+                new_sos_polynomial(prog, x_set, degree)[0]
+                for degree in self.unsafe_region
+            ]
+        )
+
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    prog.NewFreePolynomial(x_set, degree)
+                    for degree in self.state_eq_constraints
+                ]
+            )
+        )
+        return UnsafeRegionLagrangians(
+            cbf=cbf,
+            unsafe_region=unsafe_region,
+            state_eq_constraints=state_eq_constraints,
         )
 
 
@@ -348,9 +383,7 @@ class CompatibleClfCbf:
         self,
         unsafe_region_index: int,
         cbf: sym.Polynomial,
-        cbf_lagrangian_degree: int,
-        unsafe_region_lagrangian_degrees: List[int],
-        state_eq_constraints_lagrangian_degrees: Optional[List[int]] = None,
+        lagrangian_degrees: UnsafeRegionLagrangianDegrees,
         solver_options: Optional[solvers.SolverOptions] = None,
     ) -> UnsafeRegionLagrangians:
         """
@@ -368,36 +401,10 @@ class CompatibleClfCbf:
             self.unsafe_regions[unsafe_region_index]
           cbf: bᵢ(x) in the documentation above. The CBF function for
             self.unsafe_regions[unsafe_region_index]
-          cbf_lagrangian_degree: The degree of the polynomial ϕᵢ,₀(x).
-          unsafe_region_lagrangian_degrees: unsafe_region_lagrangian_degrees[j]
-          is the degree of the polynomial ϕᵢ,ⱼ₊₁(x)
         """
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x_set)
-        cbf_lagrangian, cbf_lagrangian_gram = prog.NewSosPolynomial(
-            self.x_set, cbf_lagrangian_degree
-        )
-        unsafe_lagrangians = np.array(
-            [
-                prog.NewSosPolynomial(self.x_set, deg)[0]
-                for deg in unsafe_region_lagrangian_degrees
-            ]
-        )
-        if self.state_eq_constraints is not None:
-            assert state_eq_constraints_lagrangian_degrees is not None
-            state_eq_constraints_lagrangians = np.array(
-                [
-                    prog.NewFreePolynomial(self.x_set, deg)
-                    for deg in state_eq_constraints_lagrangian_degrees
-                ]
-            )
-        else:
-            state_eq_constraints_lagrangians = None
-        lagrangians = UnsafeRegionLagrangians(
-            cbf_lagrangian,
-            unsafe_lagrangians,
-            state_eq_constraints=state_eq_constraints_lagrangians,
-        )
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set)
         self._add_barrier_safe_constraint(prog, unsafe_region_index, cbf, lagrangians)
         result = solvers.Solve(prog, None, solver_options)
         assert result.is_success()
@@ -435,9 +442,7 @@ class CompatibleClfCbf:
         """
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.xy_set)
-        lagrangians = lagrangian_degrees.initialize_lagrangians(
-            prog, self.x_set, self.y_set
-        )
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set, self.y_set)
         self._add_compatibility(
             prog=prog,
             V=V,
@@ -634,6 +639,130 @@ class CompatibleClfCbf:
             return np.logical_and(in_b, in_V)
         else:
             return in_b
+
+    def bilinear_alternation(
+        self,
+        V_init: Optional[sym.Polynomial],
+        b_init: np.ndarray,
+        rho_init: Optional[float],
+        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        barrier_eps: np.ndarray,
+        x_equilibrium: np.ndarray,
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        max_iter: int,
+        *,
+        x_inner: np.ndarray,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+        ellipsoid_trust_region: Optional[float] = 100,
+        binary_search_scale_min: float = 1,
+        binary_search_scale_max: float = 2,
+        binary_search_scale_tol: float = 0.1,
+        find_inner_ellipsoid_max_iter: int = 3,
+    ) -> Tuple[Optional[sym.Polynomial], np.ndarray, Optional[float]]:
+        """
+        Synthesize the compatible CLF and CBF through bilinear alternation. We
+        alternate between
+        1. Fixing the CLF/CBF, searching for Lagrangians.
+        2. Fixing Lagrangians, searching for CLF/CBF.
+
+        Args:
+          x_inner: Each row of x_inner is a state that should be contained in
+            the compatible region.
+          max_iter: The maximal number of bilinear alternation iterations.
+          lagrangian_coefficient_tol: We remove the coefficients whose absolute
+            value is smaller than this tolerance in the Lagrangian polynomials.
+            Use None to preserve all coefficients.
+          ellipsoid_trust_region: when we search for the ellipsoid, we put a
+            trust region constraint. This is the squared radius of that trust
+            region.
+        """
+
+        iteration = 0
+        clf = V_init
+        assert len(b_init) == len(self.unsafe_regions)
+        cbf = b_init
+        rho = rho_init
+
+        compatible_lagrangians = None
+        unsafe_lagrangians: List[UnsafeRegionLagrangians] = [None] * len(
+            self.unsafe_regions
+        )
+
+        for iteration in range(max_iter):
+            print(f"iteration {iteration}")
+            # Search for the Lagrangians.
+            for i in range(len(self.unsafe_regions)):
+                unsafe_lagrangians[i] = self.certify_cbf_unsafe_region(
+                    i, cbf[i], unsafe_regions_lagrangian_degrees[i], solver_options
+                )
+            (
+                prog_compatible,
+                compatible_lagrangians,
+            ) = self.construct_search_compatible_lagrangians(
+                clf,
+                cbf,
+                kappa_V,
+                kappa_b,
+                compatible_lagrangian_degrees,
+                rho,
+                barrier_eps,
+            )
+            result_compatible = solve_with_id(
+                prog_compatible, solver_id, solver_options
+            )
+            assert result_compatible.is_success()
+            compatible_lagrangians_result = compatible_lagrangians.get_result(
+                result_compatible, lagrangian_coefficient_tol
+            )
+
+            # Search for the inner ellipsoid.
+            V_contain_ellipsoid_lagrangian_degree = (
+                self._get_V_contain_ellipsoid_lagrangian_degree(clf)
+            )
+            b_contain_ellipsoid_lagrangian_degree = (
+                self._get_b_contain_ellipsoid_lagrangian_degrees(cbf)
+            )
+            (
+                S_ellipsoid_inner,
+                b_ellipsoid_inner,
+                c_ellipsoid_inner,
+            ) = self._find_max_inner_ellipsoid(
+                clf,
+                cbf,
+                rho,
+                V_contain_ellipsoid_lagrangian_degree,
+                b_contain_ellipsoid_lagrangian_degree,
+                x_inner,
+                solver_id=solver_id,
+                max_iter=find_inner_ellipsoid_max_iter,
+                trust_region=ellipsoid_trust_region,
+            )
+
+            clf, cbf, rho = self.binary_search_clf_cbf(
+                compatible_lagrangians_result,
+                unsafe_lagrangians,
+                clf_degree,
+                cbf_degrees,
+                x_equilibrium,
+                kappa_V,
+                kappa_b,
+                barrier_eps,
+                S_ellipsoid_inner,
+                b_ellipsoid_inner,
+                c_ellipsoid_inner,
+                binary_search_scale_min,
+                binary_search_scale_max,
+                binary_search_scale_tol,
+                solver_id,
+                solver_options,
+            )
+        return clf, cbf, rho
 
     def _calc_xi_Lambda(
         self,
@@ -1059,3 +1188,37 @@ class CompatibleClfCbf:
                 inner_eq_poly=self.state_eq_constraints,
                 outer_poly=-b[i],
             )
+
+    def _get_V_contain_ellipsoid_lagrangian_degree(
+        self, V: Optional[sym.Polynomial]
+    ) -> Optional[ContainmentLagrangianDegree]:
+        if V is None:
+            return None
+        else:
+            return ContainmentLagrangianDegree(
+                inner_ineq=[-1],
+                inner_eq=[]
+                if self.state_eq_constraints is None
+                else [
+                    np.maximum(0, V.TotalDegree() - poly.TotalDegree())
+                    for poly in self.state_eq_constraints
+                ],
+                outer=0,
+            )
+
+    def _get_b_contain_ellipsoid_lagrangian_degrees(
+        self, b: np.ndarray
+    ) -> List[ContainmentLagrangianDegree]:
+        return [
+            ContainmentLagrangianDegree(
+                inner_ineq=[-1],
+                inner_eq=[]
+                if self.state_eq_constraints is None
+                else [
+                    np.maximum(0, b_i.TotalDegree() - poly.TotalDegree())
+                    for poly in self.state_eq_constraints
+                ],
+                outer=0,
+            )
+            for b_i in b
+        ]
