@@ -11,6 +11,7 @@ from compatible_clf_cbf.utils import (
     ContainmentLagrangianDegree,
     check_array_of_polynomials,
     get_polynomial_result,
+    new_sos_polynomial,
     solve_with_id,
 )
 import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
@@ -851,20 +852,9 @@ class CompatibleClfCbf:
 
         if clf_degree is not None:
             assert x_equilibrium is not None
-            clf_monomials = sym.MonomialBasis(self.x, int(np.floor(clf_degree / 2)))
-            if np.all(x_equilibrium == 0):
-                # If the equilibrium state x* = 0, then we know that V(x*)=0
-                # and V(x) > 0 forall x != x*. This means that the linear and
-                # constant coefficient of V is zero. Hence we remove "1" from
-                # clf_monomials.
-                clf_monomials = np.array(
-                    [
-                        monomial
-                        for monomial in clf_monomials
-                        if monomial.total_degree() != 0
-                    ]
-                )
-            V, clf_gram = prog.NewSosPolynomial(clf_monomials)
+            V = new_sos_polynomial(
+                prog, self.x_set, clf_degree, zero_at_origin=np.all(x_equilibrium == 0)
+            )[0]
             if np.any(x_equilibrium != 0):
                 # Add the constraint V(x*) = 0
                 (
