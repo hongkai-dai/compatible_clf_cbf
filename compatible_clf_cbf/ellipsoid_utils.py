@@ -173,11 +173,7 @@ def maximize_inner_ellipsoid_sequentially(
             trust_region_constraint = _add_ellipsoid_trust_region(
                 prog, S, b, c, S_bar, b_bar, c_bar, trust_region
             )
-        if solver_id is None:
-            result = solvers.Solve(prog)
-        else:
-            solver = solvers.MakeSolver(solver_id)
-            result = solver.Solve(prog, None, None)
+        result = utils.solve_with_id(prog, solver_id, solver_options=None)
         assert result.is_success()
         S_result = result.GetSolution(S)
         b_result = result.GetSolution(b)

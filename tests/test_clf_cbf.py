@@ -822,7 +822,7 @@ class TestClfCbfWStateEqConstraints:
         compatible_result = solvers.Solve(compatible_prog, None, solver_options)
         assert compatible_result.is_success()
         compatible_lagrangians_result = compatible_lagrangians.get_result(
-            compatible_result, coefficient_tol=1e-5
+            compatible_result, coefficient_tol=None
         )
 
         unsafe_lagrangians = [
@@ -854,3 +854,54 @@ class TestClfCbfWStateEqConstraints:
 
     def test_search_lagrangians(self):
         self.search_lagrangians(check_result=True)
+
+    def test_search_clf_cbf(self):
+        (
+            dut,
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            V_init,
+            b_init,
+            rho_init,
+        ) = self.search_lagrangians(check_result=False)
+
+        (
+            S_ellipsoid_inner,
+            b_ellipsoid_inner,
+            c_ellipsoid_inner,
+        ) = dut._find_max_inner_ellipsoid(
+            V_init,
+            b_init,
+            rho_init,
+            V_contain_lagrangian_degree=utils.ContainmentLagrangianDegree(
+                inner_ineq=[-1], inner_eq=[0], outer=0
+            ),
+            b_contain_lagrangian_degree=[
+                utils.ContainmentLagrangianDegree(
+                    inner_ineq=[-1], inner_eq=[0], outer=0
+                )
+            ],
+            x_inner_init=np.array([0, 0, 0]),
+            max_iter=1,
+            convergence_tol=0.1,
+            trust_region=10,
+        )
+
+        V, b, rho, result = dut.search_clf_cbf_given_lagrangian(
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            clf_degree=2,
+            cbf_degrees=[2],
+            x_equilibrium=np.array([0.0, 0.0, 0.0]),
+            kappa_V=self.kappa_V,
+            kappa_b=self.kappa_b,
+            barrier_eps=self.barrier_eps,
+            S_ellipsoid_inner=S_ellipsoid_inner,
+            b_ellipsoid_inner=b_ellipsoid_inner,
+            c_ellipsoid_inner=c_ellipsoid_inner,
+        )
+        assert result.is_success()
+        assert V is not None
+        assert sym.Monomial() not in V.monomial_to_coefficient_map().keys()
+        assert b is not None
+        assert rho is not None
