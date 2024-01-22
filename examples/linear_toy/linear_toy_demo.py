@@ -49,7 +49,10 @@ def search_compatible_lagrangians(
 def search_barrier_safe_lagrangians(
     dut: clf_cbf.CompatibleClfCbf, b: np.ndarray
 ) -> List[clf_cbf.UnsafeRegionLagrangians]:
-    lagrangians = dut.certify_cbf_unsafe_region(0, b[0], 2, [2])
+    lagrangian_degrees = clf_cbf.UnsafeRegionLagrangianDegrees(
+        cbf=2, unsafe_region=[2], state_eq_constraints=None
+    )
+    lagrangians = dut.certify_cbf_unsafe_region(0, b[0], lagrangian_degrees)
     return [lagrangians]
 
 

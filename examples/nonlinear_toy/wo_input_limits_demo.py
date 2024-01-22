@@ -52,11 +52,14 @@ def main(use_y_squared: bool):
     compatible_result = solvers.Solve(compatible_prog)
     assert compatible_result.is_success()
 
+    unsafe_region_lagrangian_degrees = clf_cbf.UnsafeRegionLagrangianDegrees(
+        cbf=0, unsafe_region=[0], state_eq_constraints=None
+    )
+
     compatible.certify_cbf_unsafe_region(
         unsafe_region_index=0,
         cbf=b_init[0],
-        cbf_lagrangian_degree=0,
-        unsafe_region_lagrangian_degrees=[0],
+        lagrangian_degrees=unsafe_region_lagrangian_degrees,
         solver_options=None,
     )
 
