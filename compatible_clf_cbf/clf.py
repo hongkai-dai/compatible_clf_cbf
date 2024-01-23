@@ -190,7 +190,7 @@ class ControlLyapunov:
     By positivestellasatz, this means that there exists λ₀(x), λ₁(x), λ₂(x)
     satisfying
     -(1+λ₀(x))*(∂V/∂x*f(x)+κ*V(x))−λ₁(x)*∂V/∂x*g(x)−λ₂(x)*(ρ−V(x)) is sos.
-    λ₀(x), λ₁(x), λ₂(x) are sos.
+    λ₀(x), λ₂(x) are sos.
 
     If the set 𝒰 is a polytope with vertices u₁,..., uₙ, then V is an CLF iff
     (V(x)-ρ)xᵀx is always non-negative on the semi-algebraic set
@@ -268,7 +268,7 @@ class ControlLyapunov:
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         coefficient_tol: Optional[float] = None,
-    ) -> Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian]:
+    ) -> Optional[Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian]]:
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x_set)
         lagrangians = lagrangian_degrees.to_lagrangians(
@@ -276,8 +276,12 @@ class ControlLyapunov:
         )
         self._add_clf_condition(prog, V, lagrangians, rho, kappa)
         result = solve_with_id(prog, solver_id, solver_options)
-        assert result.is_success()
-        return lagrangians.get_result(result, coefficient_tol)
+        lagrangians_result = (
+            lagrangians.get_result(result, coefficient_tol)
+            if result.is_success()
+            else None
+        )
+        return lagrangians_result
 
     def construct_search_clf_given_lagrangian(
         self,
@@ -323,7 +327,7 @@ class ControlLyapunov:
             assert isinstance(lagrangians, ClfWoInputLimitLagrangian)
             sos_poly = (
                 -(1 + lagrangians.dVdx_times_f) * (dVdx_times_f + kappa * V)
-                - dVdx_times_g.squeeze().dot(lagrangians.dVdx_times_g)
+                - dVdx_times_g.reshape((-1,)).dot(lagrangians.dVdx_times_g)
                 - lagrangians.rho_minus_V * (rho - V)
             )
         else:
