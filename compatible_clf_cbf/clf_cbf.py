@@ -210,16 +210,20 @@ class UnsafeRegionLagrangians:
     # (such as sin²θ+cos²θ=1)
     state_eq_constraints: Optional[np.ndarray]
 
-    def get_result(self, result: solvers.MathematicalProgramResult) -> Self:
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
         return UnsafeRegionLagrangians(
-            cbf=result.GetSolution(self.cbf),
-            unsafe_region=np.array(
-                [result.GetSolution(phi) for phi in self.unsafe_region]
+            cbf=get_polynomial_result(result, self.cbf, coefficient_tol),
+            unsafe_region=get_polynomial_result(
+                result, self.unsafe_region, coefficient_tol
             ),
             state_eq_constraints=None
             if self.state_eq_constraints is None
-            else np.array(
-                [result.GetSolution(poly) for poly in self.state_eq_constraints]
+            else get_polynomial_result(
+                result, self.state_eq_constraints, coefficient_tol
             ),
         )
 
@@ -385,6 +389,7 @@ class CompatibleClfCbf:
         cbf: sym.Polynomial,
         lagrangian_degrees: UnsafeRegionLagrangianDegrees,
         solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
     ) -> UnsafeRegionLagrangians:
         """
         Certifies that the 0-superlevel set {x | bᵢ(x) >= 0} does not intersect
@@ -408,7 +413,7 @@ class CompatibleClfCbf:
         self._add_barrier_safe_constraint(prog, unsafe_region_index, cbf, lagrangians)
         result = solvers.Solve(prog, None, solver_options)
         assert result.is_success()
-        return lagrangians.get_result(result)
+        return lagrangians.get_result(result, lagrangian_coefficient_tol)
 
     def construct_search_compatible_lagrangians(
         self,

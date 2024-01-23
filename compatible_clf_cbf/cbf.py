@@ -2,7 +2,7 @@
 Certify and search Control Barrier Function (CBF) through sum-of-squares optimization.
 """
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 from typing_extensions import Self
 
 import numpy as np
@@ -13,9 +13,13 @@ from compatible_clf_cbf.utils import (
     check_array_of_polynomials,
     get_polynomial_result,
     new_sos_polynomial,
+    solve_with_id,
 )
 
-from compatible_clf_cbf.clf_cbf import UnsafeRegionLagrangians
+from compatible_clf_cbf.clf_cbf import (
+    UnsafeRegionLagrangians,
+    UnsafeRegionLagrangianDegrees,
+)
 
 
 @dataclass
@@ -256,6 +260,61 @@ class ControlBarrier:
             check_array_of_polynomials(state_eq_constraints, self.x_set)
         self.state_eq_constraints = state_eq_constraints
 
+    def search_lagrangians_given_cbf(
+        self,
+        b: sym.Polynomial,
+        eps: float,
+        kappa: float,
+        cbf_derivative_lagrangian_degrees: Union[
+            CbfWInputLimitLagrangianDegrees, CbfWoInputLimitLagrangianDegrees
+        ],
+        unsafe_region_lagrangian_degrees: UnsafeRegionLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Tuple[
+        Optional[Union[CbfWInputLimitLagrangian, CbfWoInputLimitLagrangian]],
+        Optional[UnsafeRegionLagrangians],
+    ]:
+        """
+        For a given CBF candidate, certify the CBF conditions by finding the
+        Lagrangian multipliers.
+        """
+        prog_unsafe = solvers.MathematicalProgram()
+        prog_unsafe.AddIndeterminates(self.x_set)
+        unsafe_lagrangians = unsafe_region_lagrangian_degrees.to_lagrangians(
+            prog_unsafe, self.x_set
+        )
+        self._add_barrier_safe_constraint(prog_unsafe, b, unsafe_lagrangians)
+        result_unsafe = solve_with_id(prog_unsafe, solver_id, solver_options)
+        if result_unsafe.is_success():
+            unsafe_lagrangians_result = unsafe_lagrangians.get_result(
+                result_unsafe, lagrangian_coefficient_tol
+            )
+        else:
+            unsafe_lagrangians_result = None
+
+        prog_cbf_derivative = solvers.MathematicalProgram()
+        prog_cbf_derivative.AddIndeterminates(self.x_set)
+        cbf_derivative_lagrangians = cbf_derivative_lagrangian_degrees.to_lagrangians(
+            prog_cbf_derivative, self.x_set
+        )
+        self._add_cbf_derivative_condition(
+            prog_cbf_derivative, b, cbf_derivative_lagrangians, eps, kappa
+        )
+        result_cbf_derivative = solve_with_id(
+            prog_cbf_derivative, solver_id, solver_options
+        )
+
+        cbf_derivative_lagrangians_result = (
+            cbf_derivative_lagrangians.get_result(
+                result_cbf_derivative, lagrangian_coefficient_tol
+            )
+            if result_cbf_derivative.is_success()
+            else None
+        )
+        return cbf_derivative_lagrangians_result, unsafe_lagrangians_result
+
     def _add_barrier_safe_constraint(
         self,
         prog: solvers.MathematicalProgram,
@@ -292,7 +351,7 @@ class ControlBarrier:
         prog.AddSosConstraint(poly)
         return poly
 
-    def _add_cbf_condition(
+    def _add_cbf_derivative_condition(
         self,
         prog: solvers.MathematicalProgram,
         b: sym.Polynomial,

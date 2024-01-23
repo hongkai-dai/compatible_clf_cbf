@@ -89,7 +89,7 @@ class TestCbf:
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
 
-    def test_add_cbf_condition(self):
+    def test_add_cbf_derivative_condition(self):
         dut = mut.ControlBarrier(
             f=self.f,
             g=self.g,
@@ -112,7 +112,9 @@ class TestCbf:
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set)
         eps = 0.01
         kappa = 0.001
-        sos_poly = dut._add_cbf_condition(prog, b_init, lagrangians, eps, kappa)
+        sos_poly = dut._add_cbf_derivative_condition(
+            prog, b_init, lagrangians, eps, kappa
+        )
         result = solvers.Solve(prog)
         assert result.is_success()
 
