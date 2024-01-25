@@ -267,7 +267,7 @@ class ControlLyapunov:
         ],
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
-        coefficient_tol: Optional[float] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
     ) -> Optional[Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian]]:
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x_set)
@@ -277,7 +277,7 @@ class ControlLyapunov:
         self._add_clf_condition(prog, V, lagrangians, rho, kappa)
         result = solve_with_id(prog, solver_id, solver_options)
         lagrangians_result = (
-            lagrangians.get_result(result, coefficient_tol)
+            lagrangians.get_result(result, lagrangian_coefficient_tol)
             if result.is_success()
             else None
         )

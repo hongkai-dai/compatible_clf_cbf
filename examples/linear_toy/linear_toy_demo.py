@@ -53,6 +53,7 @@ def search_barrier_safe_lagrangians(
         cbf=2, unsafe_region=[2], state_eq_constraints=None
     )
     lagrangians = dut.certify_cbf_unsafe_region(0, b[0], lagrangian_degrees)
+    assert lagrangians is not None
     return [lagrangians]
 
 
