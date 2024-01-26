@@ -11,7 +11,7 @@ import pydrake.symbolic as sym
 
 from compatible_clf_cbf.clf import ControlLyapunov, ClfWoInputLimitLagrangianDegrees
 from compatible_clf_cbf.cbf import ControlBarrier, CbfWoInputLimitLagrangianDegrees
-from compatible_clf_cbf.clf_cbf import UnsafeRegionLagrangianDegrees
+import compatible_clf_cbf.clf_cbf as clf_cbf
 
 
 def affine_dynamics() -> Tuple[np.ndarray, np.ndarray]:
@@ -23,6 +23,20 @@ def affine_dynamics() -> Tuple[np.ndarray, np.ndarray]:
         [[sym.Polynomial(1), sym.Polynomial(0)], [sym.Polynomial(0), sym.Polynomial(1)]]
     )
     return f, g
+
+
+def get_unsafe_region(
+    x: np.ndarray, obstacle_center: np.ndarray, obstacle_radius: float
+) -> np.ndarray:
+    return np.array(
+        [
+            sym.Polynomial(
+                (x[0] - obstacle_center[0]) ** 2
+                + (x[1] - obstacle_center[1]) ** 2
+                - obstacle_radius**2
+            )
+        ]
+    )
 
 
 def find_clf_cbf_separately(
@@ -76,15 +90,7 @@ def certify_clf_cbf_separately(
         f=f,
         g=g,
         x=x,
-        unsafe_region=np.array(
-            [
-                sym.Polynomial(
-                    (x[0] - obstacle_center[0]) ** 2
-                    + (x[1] - obstacle_center[1]) ** 2
-                    - obstacle_radius**2
-                )
-            ]
-        ),
+        unsafe_region=get_unsafe_region(x, obstacle_center, obstacle_radius),
         u_vertices=None,
         state_eq_constraints=None,
     )
@@ -98,12 +104,31 @@ def certify_clf_cbf_separately(
         CbfWoInputLimitLagrangianDegrees(
             dbdx_times_f=0, dbdx_times_g=[1, 1], b_plus_eps=0, state_eq_constraints=None
         ),
-        UnsafeRegionLagrangianDegrees(
+        clf_cbf.UnsafeRegionLagrangianDegrees(
             cbf=0, unsafe_region=[0], state_eq_constraints=None
         ),
     )
     assert cbf_derivative_lagrangians is not None
     assert unsafe_lagrangians is not None
+
+    compatible = clf_cbf.CompatibleClfCbf(
+        f=f,
+        g=g,
+        x=x,
+        unsafe_regions=[get_unsafe_region(x, obstacle_center, obstacle_radius)],
+        Au=None,
+        bu=None,
+        with_clf=True,
+        use_y_squared=True,
+        state_eq_constraints=None,
+    )
+    x_incompatible = (
+        obstacle_center
+        + obstacle_center / np.linalg.norm(obstacle_center) * obstacle_radius
+    )
+    assert not compatible.check_compatible_at_state(
+        clf, np.array([cbf]), x_incompatible, kappa_V, np.array([kappa_b])
+    )[0]
 
 
 def main():

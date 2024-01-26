@@ -388,9 +388,10 @@ class CompatibleClfCbf:
         unsafe_region_index: int,
         cbf: sym.Polynomial,
         lagrangian_degrees: UnsafeRegionLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
-    ) -> UnsafeRegionLagrangians:
+    ) -> Optional[UnsafeRegionLagrangians]:
         """
         Certifies that the 0-superlevel set {x | bᵢ(x) >= 0} does not intersect
         with the unsafe region self.unsafe_regions[unsafe_region_index].
@@ -411,9 +412,13 @@ class CompatibleClfCbf:
         prog.AddIndeterminates(self.x_set)
         lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set)
         self._add_barrier_safe_constraint(prog, unsafe_region_index, cbf, lagrangians)
-        result = solvers.Solve(prog, None, solver_options)
-        assert result.is_success()
-        return lagrangians.get_result(result, lagrangian_coefficient_tol)
+        result = solve_with_id(prog, solver_id, solver_options)
+        lagrangians_result = (
+            lagrangians.get_result(result, lagrangian_coefficient_tol)
+            if result.is_success()
+            else None
+        )
+        return lagrangians_result
 
     def construct_search_compatible_lagrangians(
         self,
@@ -459,6 +464,50 @@ class CompatibleClfCbf:
             barrier_eps=barrier_eps,
         )
         return (prog, lagrangians)
+
+    def search_lagrangians_given_clf_cbf(
+        self,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        rho: Optional[float],
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        barrier_eps: np.ndarray,
+        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Tuple[
+        Optional[CompatibleLagrangians], List[Optional[UnsafeRegionLagrangians]]
+    ]:
+        (
+            prog_compatible,
+            compatible_lagrangians,
+        ) = self.construct_search_compatible_lagrangians(
+            V, b, kappa_V, kappa_b, compatible_lagrangian_degrees, rho, barrier_eps
+        )
+        result_compatible = solve_with_id(prog_compatible, solver_id, solver_options)
+        compatible_lagrangians_result = (
+            compatible_lagrangians.get_result(
+                result_compatible, lagrangian_coefficient_tol
+            )
+            if result_compatible.is_success()
+            else None
+        )
+        unsafe_lagrangians_result: List[Optional[UnsafeRegionLagrangians]] = [
+            None
+        ] * len(self.unsafe_regions)
+        for i in range(len(self.unsafe_regions)):
+            unsafe_lagrangians_result[i] = self.certify_cbf_unsafe_region(
+                i,
+                b[i],
+                unsafe_regions_lagrangian_degrees[i],
+                solver_id,
+                solver_options,
+                lagrangian_coefficient_tol,
+            )
+        return compatible_lagrangians_result, unsafe_lagrangians_result
 
     def search_clf_cbf_given_lagrangian(
         self,
@@ -695,36 +744,31 @@ class CompatibleClfCbf:
         rho = rho_init
 
         compatible_lagrangians = None
-        unsafe_lagrangians: List[UnsafeRegionLagrangians] = [None] * len(
+        unsafe_lagrangians: List[Optional[UnsafeRegionLagrangians]] = [None] * len(
             self.unsafe_regions
         )
 
         for iteration in range(max_iter):
             print(f"iteration {iteration}")
             # Search for the Lagrangians.
-            for i in range(len(self.unsafe_regions)):
-                unsafe_lagrangians[i] = self.certify_cbf_unsafe_region(
-                    i, cbf[i], unsafe_regions_lagrangian_degrees[i], solver_options
-                )
             (
-                prog_compatible,
                 compatible_lagrangians,
-            ) = self.construct_search_compatible_lagrangians(
+                unsafe_lagrangians,
+            ) = self.search_lagrangians_given_clf_cbf(
                 clf,
                 cbf,
+                rho,
                 kappa_V,
                 kappa_b,
-                compatible_lagrangian_degrees,
-                rho,
                 barrier_eps,
+                compatible_lagrangian_degrees,
+                unsafe_regions_lagrangian_degrees,
+                solver_id,
+                solver_options,
+                lagrangian_coefficient_tol,
             )
-            result_compatible = solve_with_id(
-                prog_compatible, solver_id, solver_options
-            )
-            assert result_compatible.is_success()
-            compatible_lagrangians_result = compatible_lagrangians.get_result(
-                result_compatible, lagrangian_coefficient_tol
-            )
+            assert compatible_lagrangians is not None
+            assert all(unsafe_lagrangians)
 
             # Search for the inner ellipsoid.
             V_contain_ellipsoid_lagrangian_degree = (
@@ -750,7 +794,7 @@ class CompatibleClfCbf:
             )
 
             clf, cbf, rho = self.binary_search_clf_cbf(
-                compatible_lagrangians_result,
+                compatible_lagrangians,
                 unsafe_lagrangians,
                 clf_degree,
                 cbf_degrees,
@@ -768,6 +812,59 @@ class CompatibleClfCbf:
                 solver_options,
             )
         return clf, cbf, rho
+
+    def check_compatible_at_state(
+        self,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        x_val: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_b: np.ndarray,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+    ) -> Tuple[bool, solvers.MathematicalProgramResult]:
+        """
+        Check if at a given state the CLF and CBFs are compatible, namely there
+        exists a common u such that
+        Vdot(x, u) <= -kappa_V * V
+        bdot(x, u) >= -kappa_b * b
+        """
+        prog = solvers.MathematicalProgram()
+        u = prog.NewContinuousVariables(self.nu, "u")
+        assert x_val.shape == (self.nx,)
+        env = {self.x[i]: x_val[i] for i in range(self.nx)}
+        f_val = np.array([f_i.Evaluate(env) for f_i in self.f])
+        g_val = np.array(
+            [
+                [self.g[i, j].Evaluate(env) for j in range(self.nu)]
+                for i in range(self.nx)
+            ]
+        )
+        if V is not None:
+            assert kappa_V is not None
+            V_val = V.Evaluate(env)
+            dVdx = V.Jacobian(self.x)
+            dVdx_val = np.array([dVdx[i].Evaluate(env) for i in range(self.nx)])
+            dVdx_times_f_val = dVdx_val.dot(f_val)
+            dVdx_times_g_val = dVdx_val @ g_val
+            prog.AddLinearConstraint(
+                dVdx_times_f_val + dVdx_times_g_val @ u <= -kappa_V * V_val
+            )
+        for b_i in b:
+            b_val = b_i.Evaluate(env)
+            dbdx = b_i.Jacobian(self.x)
+            dbdx_val = np.array([dbdx[i].Evaluate(env) for i in range(self.nx)])
+            dbdx_times_f_val = dbdx_val.dot(f_val)
+            dbdx_times_g_val = dbdx_val @ g_val
+            prog.AddLinearConstraint(
+                dbdx_times_f_val + dbdx_times_g_val @ u >= -kappa_b * b_val
+            )
+        if self.Au is not None and self.bu is not None:
+            prog.AddLinearConstraint(
+                self.Au, np.full_like(self.bu, -np.inf), self.bu, u
+            )
+        result = solve_with_id(prog, solver_id, solver_options)
+        return result.is_success(), result
 
     def _calc_xi_Lambda(
         self,

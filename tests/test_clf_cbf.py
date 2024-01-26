@@ -369,6 +369,7 @@ class TestClfCbf(object):
             cbf,
             unsafe_region_lagrangian_degrees,
         )
+        assert lagrangians is not None
         assert utils.is_sos(lagrangians.cbf)
         for i in range(dut.unsafe_regions[0].size):
             assert utils.is_sos(lagrangians.unsafe_region[i])
@@ -574,6 +575,7 @@ class TestClfCbfToy:
                 solver_options=None,
             )
         ]
+        assert unsafe_lagrangians is not None
 
         return (
             dut,
@@ -738,6 +740,29 @@ class TestClfCbfToy:
         x_samples = 5 * np.random.randn(1000, 2) - np.array([[5, 0]])
         self.check_unsafe_region_by_sample(b, x_samples)
 
+    def test_check_compatible_at_state(self):
+        (
+            dut,
+            _,
+            _,
+            V_init,
+            b_init,
+            rho_init,
+        ) = self.search_lagrangians()
+        # Since we have proved that V_init and b_init are compatible, then for
+        # any state within the compatible region, there should extis control u.
+        x_samples = np.random.randn(100, 2)
+        in_compatible_flag = dut.in_compatible_region(
+            V_init, b_init, rho_init, x_samples
+        )
+        for i in range(x_samples.shape[0]):
+            if in_compatible_flag[i]:
+                is_compatible, result = dut.check_compatible_at_state(
+                    V_init, b_init, x_samples[i], self.kappa_V, self.kappa_b
+                )
+                assert is_compatible
+                assert result.is_success()
+
 
 class TestClfCbfWStateEqConstraints:
     """
@@ -844,6 +869,7 @@ class TestClfCbfWStateEqConstraints:
                 solver_options=None,
             )
         ]
+        assert unsafe_lagrangians is not None
         if check_result:
             assert utils.is_sos(
                 -(1 + unsafe_lagrangians[0].cbf) * b_init[0]
