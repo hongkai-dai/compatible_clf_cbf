@@ -131,6 +131,68 @@ def certify_clf_cbf_separately(
     )[0]
 
 
+def find_clf_cbf_jointly(
+    x: np.ndarray, obstacle_center: np.ndarray, obstacle_radius: float
+) -> Tuple[sym.Polynomial, sym.Polynomial, float]:
+    f, g = affine_dynamics()
+    compatible = clf_cbf.CompatibleClfCbf(
+        f=f,
+        g=g,
+        x=x,
+        unsafe_regions=[get_unsafe_region(x, obstacle_center, obstacle_radius)],
+        Au=None,
+        bu=None,
+        with_clf=True,
+        use_y_squared=True,
+        state_eq_constraints=None,
+    )
+    clf_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2)
+    cbf_init = np.array(
+        [
+            sym.Polynomial(
+                (x[0] - obstacle_center[0]) ** 2
+                + (x[1] - obstacle_center[1]) ** 2
+                - obstacle_radius**2
+            )
+        ]
+    )
+    rho_init = 0.1
+    kappa_V = 0.01
+    kappa_b = np.array([0.01])
+    barrier_eps = np.array([0.0])
+    compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
+        lambda_y=[
+            clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+            clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+        ],
+        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+        y=None,
+        rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        state_eq_constraints=None,
+    )
+    unsafe_regions_lagrangian_degrees = [
+        clf_cbf.UnsafeRegionLagrangianDegrees(
+            cbf=0, unsafe_region=[0], state_eq_constraints=None
+        )
+    ]
+    (
+        compatible_lagrangians,
+        unsafe_regions_lagrangians,
+    ) = compatible.search_lagrangians_given_clf_cbf(
+        clf_init,
+        cbf_init,
+        rho_init,
+        kappa_V,
+        kappa_b,
+        barrier_eps,
+        compatible_lagrangian_degrees,
+        unsafe_regions_lagrangian_degrees,
+    )
+    assert compatible_lagrangians is not None
+    assert unsafe_regions_lagrangians[0] is not None
+
+
 def main():
     x = sym.MakeVectorContinuousVariable(2, "x")
     obstacle_center = np.array([1.0, 0.0])
@@ -143,6 +205,7 @@ def main():
     certify_clf_cbf_separately(
         x, V, b, rho, kappa_V, kappa_b, barrier_eps, obstacle_center, obstacle_radius
     )
+    find_clf_cbf_jointly(x, obstacle_center, obstacle_radius)
 
 
 if __name__ == "__main__":
