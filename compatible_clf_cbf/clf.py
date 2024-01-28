@@ -1,6 +1,7 @@
 """
 Certify and search Control Lyapunov function (CLF) through sum-of-squares optimization.
 """
+
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 from typing_extensions import Self

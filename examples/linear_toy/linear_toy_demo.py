@@ -1,6 +1,7 @@
 """
 We search for compatible CLF and CBF for a 2D linear system.
 """
+
 from typing import List, Tuple
 
 import numpy as np
@@ -27,11 +28,14 @@ def search_compatible_lagrangians(
             clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(dut.nx)
         ],
         xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
-        y=None
-        if dut.use_y_squared
-        else [
-            clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(y_size)
-        ],
+        y=(
+            None
+            if dut.use_y_squared
+            else [
+                clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)
+                for _ in range(y_size)
+            ]
+        ),
         rho_minus_V=None,
         b_plus_eps=None,
         state_eq_constraints=None,
