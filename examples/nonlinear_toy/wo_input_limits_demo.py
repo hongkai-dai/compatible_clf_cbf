@@ -23,7 +23,7 @@ def main(use_y_squared: bool):
         with_clf=True,
         use_y_squared=use_y_squared,
     )
-    V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2)
+    V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2) / 0.01
     b_init = np.array([sym.Polynomial(0.001 - x[0] ** 2 - x[1] ** 2)])
     kappa_V = 1e-3
     kappa_b = np.array([kappa_V])
@@ -41,13 +41,12 @@ def main(use_y_squared: bool):
         b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
         state_eq_constraints=None,
     )
-    rho = 0.01
     barrier_eps = np.array([0.0001])
     (
         compatible_prog,
         compatible_lagrangians,
     ) = compatible.construct_search_compatible_lagrangians(
-        V_init, b_init, kappa_V, kappa_b, lagrangian_degrees, rho, barrier_eps
+        V_init, b_init, kappa_V, kappa_b, lagrangian_degrees, barrier_eps
     )
     compatible_result = solvers.Solve(compatible_prog)
     assert compatible_result.is_success()

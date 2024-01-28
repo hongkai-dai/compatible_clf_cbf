@@ -427,13 +427,13 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         lagrangian_degrees: CompatibleLagrangianDegrees,
-        rho: Optional[float],
         barrier_eps: Optional[np.ndarray],
+        local_clf: bool = True,
     ) -> Tuple[solvers.MathematicalProgram, CompatibleLagrangians]:
         """
         Given CLF candidate V and CBF candidate b, construct the optimization
         program to certify that they are compatible within the region
-        {x | V(x) <= rho} ∩ {x | b(x) >= -eps}.
+        {x | V(x) <= 1} ∩ {x | b(x) >= -eps}.
 
         Args:
           V: The CLF candidate. If empty, then we will certify that the multiple
@@ -442,10 +442,10 @@ class CompatibleClfCbf:
           kappa_V: The exponential decay rate for CLF. Namely we want V̇ ≤ −κ_V*V
           kappa_b: The exponential rate for CBF, namely we want ḃ ≥ −κ_b*b
           lagrangian_degrees: The degrees for the Lagrangian polynomials.
-          rho: The certified inner approximation of ROA is {x | V(x) <= rho}
           barrier_eps: The certified safe region is {x | b(x) >= -eps}
           coefficient_tol: In the Lagrangian polynomials, we will remove the
             coefficients no larger than this tolerance.
+          local_clf: Whether the CLF is valid in a local region or globally.
         Returns:
           result: The result for solving the optimization program.
           lagrangian_result: The result of the Lagrangian polynomials.
@@ -460,8 +460,8 @@ class CompatibleClfCbf:
             kappa_V=kappa_V,
             kappa_b=kappa_b,
             lagrangians=lagrangians,
-            rho=rho,
             barrier_eps=barrier_eps,
+            local_clf=local_clf,
         )
         return (prog, lagrangians)
 
@@ -469,7 +469,6 @@ class CompatibleClfCbf:
         self,
         V: Optional[sym.Polynomial],
         b: np.ndarray,
-        rho: Optional[float],
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
@@ -485,7 +484,7 @@ class CompatibleClfCbf:
             prog_compatible,
             compatible_lagrangians,
         ) = self.construct_search_compatible_lagrangians(
-            V, b, kappa_V, kappa_b, compatible_lagrangian_degrees, rho, barrier_eps
+            V, b, kappa_V, kappa_b, compatible_lagrangian_degrees, barrier_eps
         )
         result_compatible = solve_with_id(prog_compatible, solver_id, solver_options)
         compatible_lagrangians_result = (
@@ -527,20 +526,18 @@ class CompatibleClfCbf:
     ) -> Tuple[
         Optional[sym.Polynomial],
         Optional[np.ndarray],
-        Optional[float],
         solvers.MathematicalProgramResult,
     ]:
         """
         Given the Lagrangian multipliers and an inner ellipsoid, find the clf
         and cbf, such that the compatible region contains that inner ellipsoid.
 
-        Returns: (V, b, rho, result)
+        Returns: (V, b, result)
           V: The CLF.
           b: The CBF.
-          rho: The certified ROA is {x | V(x) <= rho}.
           result: The result of the optimization program.
         """
-        prog, V, b, rho = self._construct_search_clf_cbf_program(
+        prog, V, b = self._construct_search_clf_cbf_program(
             compatible_lagrangians,
             unsafe_regions_lagrangians,
             clf_degree,
@@ -552,19 +549,17 @@ class CompatibleClfCbf:
         )
 
         self._add_ellipsoid_in_compatible_region_constraint(
-            prog, V, b, rho, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+            prog, V, b, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
         )
 
         result = solve_with_id(prog, solver_id, solver_options)
         if result.is_success():
-            V_sol = result.GetSolution(V)
+            V_sol = None if V is None else result.GetSolution(V)
             b_sol = np.array([result.GetSolution(b_i) for b_i in b])
-            rho_sol = result.GetSolution(rho)
         else:
             V_sol = None
             b_sol = None
-            rho_sol = None
-        return V_sol, b_sol, rho_sol, result
+        return V_sol, b_sol, result
 
     def binary_search_clf_cbf(
         self,
@@ -584,7 +579,7 @@ class CompatibleClfCbf:
         scale_tol: float,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
-    ) -> Tuple[Optional[sym.Polynomial], np.ndarray, Optional[float]]:
+    ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
         """
         Given the Lagrangian multipliers, find the compatible CLF and CBFs,
         with the goal to enlarge the compatible region.
@@ -599,7 +594,7 @@ class CompatibleClfCbf:
           scale_tol: Terminate the binary search when the difference between
             the max/min scaling factor is below this tolerance.
 
-        Return: (V, b, rho)
+        Return: (V, b)
         """
 
         def search(
@@ -607,13 +602,12 @@ class CompatibleClfCbf:
         ) -> Tuple[
             Optional[sym.Polynomial],
             Optional[np.ndarray],
-            Optional[float],
             solvers.MathematicalProgramResult,
         ]:
             c_new = ellipsoid_utils.scale_ellipsoid(
                 S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, scale
             )
-            V, b, rho, result = self.search_clf_cbf_given_lagrangian(
+            V, b, result = self.search_clf_cbf_given_lagrangian(
                 compatible_lagrangians,
                 unsafe_regions_lagrangians,
                 clf_degree,
@@ -628,17 +622,17 @@ class CompatibleClfCbf:
                 solver_id,
                 solver_options,
             )
-            return V, b, rho, result
+            return V, b, result
 
         assert scale_max >= scale_min
         assert scale_tol > 0
-        V, b, rho, result = search(scale_max)
+        V, b, result = search(scale_max)
         if result.is_success():
             print(f"binary_search_clf_cbf: scale={scale_max} is feasible.")
             assert b is not None
-            return V, b, rho
+            return V, b
 
-        V_success, b_success, rho_success, result = search(scale_min)
+        V_success, b_success, result = search(scale_min)
         assert (
             result.is_success()
         ), f"binary_search_clf_cbf: scale_min={scale_min} is not feasible."
@@ -646,30 +640,28 @@ class CompatibleClfCbf:
 
         while scale_max - scale_min > scale_tol:
             scale = (scale_max + scale_min) / 2
-            V, b, rho, result = search(scale)
+            V, b, result = search(scale)
             if result.is_success():
                 print(f"binary_search_clf_cbf: scale={scale} is feasible.")
                 scale_min = scale
                 V_success = V
                 assert b is not None
                 b_success = b
-                rho_success = rho
             else:
                 print(f"binary_search_clf_cbf: scale={scale} is not feasible.")
                 scale_max = scale
 
-        return V_success, b_success, rho_success
+        return V_success, b_success
 
     def in_compatible_region(
         self,
         V: Optional[sym.Polynomial],
         b: np.ndarray,
-        rho: Optional[float],
         x_samples: np.ndarray,
     ) -> np.ndarray:
         """
         Returns if x_samples[i] is in the compatible region
-        {x | V(x) <= rho, b(x) >= 0}.
+        {x | V(x) <= 1, b(x) >= 0}.
 
         Return:
         in_compatible_flag: in_compatible_flag[i] is True iff x_samples[i] is
@@ -688,8 +680,7 @@ class CompatibleClfCbf:
             axis=1,
         )
         if V is not None:
-            assert rho is not None
-            in_V = V.EvaluateIndeterminates(self.x, x_samples.T) <= rho
+            in_V = V.EvaluateIndeterminates(self.x, x_samples.T) <= 1
             return np.logical_and(in_b, in_V)
         else:
             return in_b
@@ -698,7 +689,6 @@ class CompatibleClfCbf:
         self,
         V_init: Optional[sym.Polynomial],
         b_init: np.ndarray,
-        rho_init: Optional[float],
         compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
         unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
         kappa_V: Optional[float],
@@ -718,7 +708,7 @@ class CompatibleClfCbf:
         binary_search_scale_max: float = 2,
         binary_search_scale_tol: float = 0.1,
         find_inner_ellipsoid_max_iter: int = 3,
-    ) -> Tuple[Optional[sym.Polynomial], np.ndarray, Optional[float]]:
+    ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
         """
         Synthesize the compatible CLF and CBF through bilinear alternation. We
         alternate between
@@ -741,7 +731,6 @@ class CompatibleClfCbf:
         clf = V_init
         assert len(b_init) == len(self.unsafe_regions)
         cbf = b_init
-        rho = rho_init
 
         compatible_lagrangians = None
         unsafe_lagrangians: List[Optional[UnsafeRegionLagrangians]] = [None] * len(
@@ -757,7 +746,6 @@ class CompatibleClfCbf:
             ) = self.search_lagrangians_given_clf_cbf(
                 clf,
                 cbf,
-                rho,
                 kappa_V,
                 kappa_b,
                 barrier_eps,
@@ -784,7 +772,6 @@ class CompatibleClfCbf:
             ) = self._find_max_inner_ellipsoid(
                 clf,
                 cbf,
-                rho,
                 V_contain_ellipsoid_lagrangian_degree,
                 b_contain_ellipsoid_lagrangian_degree,
                 x_inner,
@@ -793,7 +780,7 @@ class CompatibleClfCbf:
                 trust_region=ellipsoid_trust_region,
             )
 
-            clf, cbf, rho = self.binary_search_clf_cbf(
+            clf, cbf = self.binary_search_clf_cbf(
                 compatible_lagrangians,
                 unsafe_lagrangians,
                 clf_degree,
@@ -811,7 +798,7 @@ class CompatibleClfCbf:
                 solver_id,
                 solver_options,
             )
-        return clf, cbf, rho
+        return clf, cbf
 
     def check_compatible_at_state(
         self,
@@ -925,8 +912,8 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         lagrangians: CompatibleLagrangians,
-        rho: Optional[float],
         barrier_eps: Optional[np.ndarray],
+        local_clf: bool,
     ) -> sym.Polynomial:
         """
         Add the p-satz condition that certifies the following set is empty
@@ -944,11 +931,11 @@ class CompatibleClfCbf:
         ξ(x) = [ ∂b/∂x*f(x)+κ_b*b(x)]
                [-∂V/∂x*f(x)-κ_V*V(x)]
         To certify the emptiness of the set in (1), we can use the sufficient condition
-        -1 - s₀(x, y)ᵀ Λ(x)ᵀy - s₁(x, y)(ξ(x)ᵀy+1) - s₂(x, y)ᵀy - s₃(x, y)(ρ − V) - s₄(x, y)ᵀ(b(x)+ε) is sos          (3)
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy - s₁(x, y)(ξ(x)ᵀy+1) - s₂(x, y)ᵀy - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(b(x)+ε) is sos          (3)
         s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
 
         To certify the emptiness of the set in (2), we can use the sufficient condition
-        -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(ρ − V) - s₄(x, y)ᵀ(b(x)+ε) is sos                     (4)
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(b(x)+ε) is sos                     (4)
         s₃(x, y), s₄(x, y) are all sos.
 
         Note that we do NOT add the constraint
@@ -984,11 +971,11 @@ class CompatibleClfCbf:
             assert lagrangians.y is not None
             poly -= lagrangians.y.dot(self.y_poly)
 
-        # Compute s₃(x, y)(ρ − V)
-        if rho is not None and self.with_clf:
+        # Compute s₃(x, y)(1 − V)
+        if self.with_clf and local_clf:
             assert V is not None
             assert lagrangians.rho_minus_V is not None
-            poly -= lagrangians.rho_minus_V * (rho * poly_one - V)
+            poly -= lagrangians.rho_minus_V * (poly_one - V)
 
         # Compute s₄(x, y)ᵀ(b(x)+ε)
         if barrier_eps is not None:
@@ -1056,12 +1043,8 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
-    ) -> Tuple[
-        solvers.MathematicalProgram,
-        Optional[sym.Polynomial],
-        np.ndarray,
-        Optional[sym.Variable],
-    ]:
+        local_clf: bool = True,
+    ) -> Tuple[solvers.MathematicalProgram, Optional[sym.Polynomial], np.ndarray,]:
         """
         Construct a program to search for compatible CLF/CBFs given the Lagrangians.
         Notice that we have not imposed the cost to the program yet.
@@ -1114,9 +1097,6 @@ class CompatibleClfCbf:
             self._add_barrier_safe_constraint(
                 prog, i, b[i], unsafe_regions_lagrangians[i]
             )
-        rho = None if V is None else prog.NewContinuousVariables(1, "rho")[0]
-        if rho is not None:
-            prog.AddBoundingBoxConstraint(0, np.inf, rho)
 
         self._add_compatibility(
             prog=prog,
@@ -1125,17 +1105,16 @@ class CompatibleClfCbf:
             kappa_V=kappa_V,
             kappa_b=kappa_b,
             lagrangians=compatible_lagrangians,
-            rho=rho,
             barrier_eps=barrier_eps,
+            local_clf=local_clf,
         )
 
-        return (prog, V, b, rho)
+        return (prog, V, b)
 
     def _find_max_inner_ellipsoid(
         self,
         V: Optional[sym.Polynomial],
         b: np.ndarray,
-        rho: Optional[float],
         V_contain_lagrangian_degree: Optional[ContainmentLagrangianDegree],
         b_contain_lagrangian_degree: List[ContainmentLagrangianDegree],
         x_inner_init: np.ndarray,
@@ -1146,7 +1125,7 @@ class CompatibleClfCbf:
     ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
         Args:
-          x_inner_init: The initial guess on a point inside V(x) <= rho and
+          x_inner_init: The initial guess on a point inside V(x) <= 1 and
             b(x) >= 0. The initial ellipsoid will cover this point.
         """
         prog = solvers.MathematicalProgram()
@@ -1167,12 +1146,11 @@ class CompatibleClfCbf:
                 prog, self.x_set
             )
             assert V is not None
-            assert rho is not None
             V_contain_lagrangian.add_constraint(
                 prog,
                 inner_ineq_poly=np.array([ellipsoid]),
                 inner_eq_poly=self.state_eq_constraints,
-                outer_poly=V - rho,
+                outer_poly=V - 1,
             )
         b_contain_lagrangians = [
             degree.construct_lagrangian(prog, self.x_set)
@@ -1187,10 +1165,10 @@ class CompatibleClfCbf:
                 outer_poly=-b[i],
             )
 
-        # Make sure x_inner_init is inside V(x) <= rho and b(x) >= 0.
+        # Make sure x_inner_init is inside V(x) <= 1 and b(x) >= 0.
         env_inner_init = {self.x[i]: x_inner_init[i] for i in range(self.nx)}
         if V is not None:
-            assert V.Evaluate(env_inner_init) <= rho
+            assert V.Evaluate(env_inner_init) <= 1
         for b_i in b:
             assert b_i.Evaluate(env_inner_init) >= 0
 
@@ -1232,14 +1210,13 @@ class CompatibleClfCbf:
         prog: solvers.MathematicalProgram,
         V: Optional[sym.Polynomial],
         b: np.ndarray,
-        rho: sym.Variable,
         S_ellipsoid_inner: np.ndarray,
         b_ellipsoid_inner: np.ndarray,
         c_ellipsoid_inner: float,
     ):
         """
         Add the constraint that the ellipsoid is contained within the
-        compatible region {x | V(x) <= rho, b(x) >= 0}.
+        compatible region {x | V(x) <= 1, b(x) >= 0}.
         """
         ellipsoid_poly = sym.Polynomial(
             self.x.dot(S_ellipsoid_inner @ self.x)
@@ -1262,12 +1239,11 @@ class CompatibleClfCbf:
             ellipsoid_in_V_lagrangian = (
                 ellipsoid_in_V_lagrangian_degree.construct_lagrangian(prog, self.x_set)
             )
-            assert rho is not None
             ellipsoid_in_V_lagrangian.add_constraint(
                 prog,
                 inner_ineq_poly=np.array([ellipsoid_poly]),
                 inner_eq_poly=self.state_eq_constraints,
-                outer_poly=V - sym.Polynomial({sym.Monomial(): sym.Expression(rho)}),
+                outer_poly=V - sym.Polynomial({sym.Monomial(): sym.Expression(1)}),
             )
         for i in range(b.size):
             b_degree = b[i].TotalDegree()

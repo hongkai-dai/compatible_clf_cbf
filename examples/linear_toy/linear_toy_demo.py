@@ -37,7 +37,7 @@ def search_compatible_lagrangians(
         state_eq_constraints=None,
     )
     prog, lagrangians = dut.construct_search_compatible_lagrangians(
-        V, b, kappa_V, kappa_b, lagrangian_degrees, rho=None, barrier_eps=None
+        V, b, kappa_V, kappa_b, lagrangian_degrees, barrier_eps=None, local_clf=False
     )
 
     result = pydrake.solvers.Solve(prog)
