@@ -212,7 +212,7 @@ class TestClfCbf(object):
             with_clf=True,
             use_y_squared=True,
         )
-        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2 + dut.x[2] ** 2)
+        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2 + dut.x[2] ** 2) / 0.001
         b = np.array(
             [
                 sym.Polynomial(1 - dut.x[0] ** 2 - dut.x[1] ** 2),
@@ -234,11 +234,10 @@ class TestClfCbf(object):
             ],
             state_eq_constraints=None,
         )
-        rho = 0.001
         barrier_eps = np.array([0.01, 0.02])
 
         prog, lagrangians = dut.construct_search_compatible_lagrangians(
-            V, b, kappa_V, kappa_b, lagrangian_degrees, rho, barrier_eps
+            V, b, kappa_V, kappa_b, lagrangian_degrees, barrier_eps
         )
 
     def test_add_compatibility_w_clf_y_squared(self):
@@ -258,7 +257,7 @@ class TestClfCbf(object):
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(dut.xy_set)
 
-        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2)
+        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2) / 0.1
         b = np.array(
             [
                 sym.Polynomial(1 - dut.x[0] ** 2 - dut.x[1] ** 2),
@@ -290,7 +289,6 @@ class TestClfCbf(object):
             state_eq_constraints=None,
         )
 
-        rho = 0.1
         barrier_eps = np.array([0.01, 0.02])
         poly = dut._add_compatibility(
             prog=prog,
@@ -299,8 +297,8 @@ class TestClfCbf(object):
             kappa_V=kappa_V,
             kappa_b=kappa_b,
             lagrangians=lagrangians,
-            rho=rho,
             barrier_eps=barrier_eps,
+            local_clf=True,
         )
         (xi, lambda_mat) = dut._calc_xi_Lambda(
             V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b
@@ -309,7 +307,7 @@ class TestClfCbf(object):
             -1
             - lagrangians.lambda_y.dot(lambda_mat.T @ dut.y_squared_poly)
             - lagrangians.xi_y * (xi.dot(dut.y_squared_poly) + 1)
-            - lagrangians.rho_minus_V * (rho - V)
+            - lagrangians.rho_minus_V * (1 - V)
             - lagrangians.b_plus_eps.dot(b + barrier_eps)
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, tolerance=1e-5)
@@ -388,15 +386,16 @@ class TestClfCbf(object):
         S_ellipsoid = np.diag(np.array([1, 2.0, 3.0]))
         b_ellipsoid = np.array([0.5, 2, 1])
         c_ellipsoid = b_ellipsoid.dot(np.linalg.solve(S_ellipsoid, b_ellipsoid)) / 4
-        V = sym.Polynomial(
-            self.x.dot(S_ellipsoid @ self.x) + b_ellipsoid.dot(self.x) + c_ellipsoid
+        V = (
+            sym.Polynomial(
+                self.x.dot(S_ellipsoid @ self.x) + b_ellipsoid.dot(self.x) + c_ellipsoid
+            )
+            / 2
         )
         b = np.array([sym.Polynomial(1 - self.x.dot(self.x))])
-        rho = 2
         S_sol, b_sol, c_sol = dut._find_max_inner_ellipsoid(
             V,
             b,
-            rho,
             V_contain_lagrangian_degree=utils.ContainmentLagrangianDegree(
                 inner_ineq=[-1], inner_eq=[], outer=0
             ),
@@ -408,9 +407,9 @@ class TestClfCbf(object):
             convergence_tol=1e-4,
             trust_region=100,
         )
-        # Make sure the ellipsoid is within V<= rho and b >= 0
+        # Make sure the ellipsoid is within V <= 1 and b >= 0
         assert ellipsoid_utils.is_ellipsoid_contained(
-            S_sol, b_sol, c_sol, S_ellipsoid, b_ellipsoid, c_ellipsoid - rho
+            S_sol, b_sol, c_sol, S_ellipsoid, b_ellipsoid, c_ellipsoid - 2
         )
         assert ellipsoid_utils.is_ellipsoid_contained(
             S_sol, b_sol, c_sol, np.eye(3), np.zeros(3), -1
@@ -424,7 +423,6 @@ class TestClfCbf(object):
         b = np.empty((2,), dtype=object)
         for i in range(b.size):
             b[i] = prog.NewFreePolynomial(x_set, 4)
-        rho = prog.NewContinuousVariables(1, "rho")[0]
         S_ellipsoid_inner = np.array([[3, 0, 1], [0, 4, 2.0], [1.0, 2.0, 4]])
         b_ellipsoid_inner = np.array([1, 3, 2])
         c_ellipsoid_inner: float = (
@@ -445,7 +443,7 @@ class TestClfCbf(object):
         )
 
         dut._add_ellipsoid_in_compatible_region_constraint(
-            prog, V, b, rho, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+            prog, V, b, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
         )
         result = solvers.Solve(prog)
         assert result.is_success()
@@ -458,9 +456,8 @@ class TestClfCbf(object):
             S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, x_samples
         )
         V_sol = result.GetSolution(V)
-        rho_sol = result.GetSolution(rho)
         b_sol = np.array([result.GetSolution(b_i) for b_i in b])
-        in_compatible = dut.in_compatible_region(V_sol, b_sol, rho_sol, x_samples)
+        in_compatible = dut.in_compatible_region(V_sol, b_sol, x_samples)
         assert np.all(in_compatible[in_ellipsoid])
 
 
@@ -518,7 +515,6 @@ class TestClfCbfToy:
         List[mut.UnsafeRegionLagrangians],
         sym.Polynomial,
         np.ndarray,
-        float,
     ]:
         use_y_squared = True
         dut = mut.CompatibleClfCbf(
@@ -531,7 +527,7 @@ class TestClfCbfToy:
             with_clf=True,
             use_y_squared=use_y_squared,
         )
-        V_init = sym.Polynomial(self.x[0] ** 2 + self.x[1] ** 2)
+        V_init = sym.Polynomial(self.x[0] ** 2 + self.x[1] ** 2) / 0.01
         b_init = np.array([sym.Polynomial(0.001 - self.x[0] ** 2 - self.x[1] ** 2)])
 
         lagrangian_degrees = mut.CompatibleLagrangianDegrees(
@@ -542,7 +538,6 @@ class TestClfCbfToy:
             b_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
             state_eq_constraints=None,
         )
-        rho = 0.01
 
         (
             compatible_prog,
@@ -553,7 +548,6 @@ class TestClfCbfToy:
             self.kappa_V,
             self.kappa_b,
             lagrangian_degrees,
-            rho,
             self.barrier_eps,
         )
         solver_options = solvers.SolverOptions()
@@ -583,7 +577,6 @@ class TestClfCbfToy:
             unsafe_lagrangians,
             V_init,
             b_init,
-            rho,
         )
 
     def test_construct_search_clf_cbf_program(self):
@@ -593,9 +586,8 @@ class TestClfCbfToy:
             unsafe_lagrangians,
             _,
             _,
-            _,
         ) = self.search_lagrangians()
-        prog, V, b, rho = dut._construct_search_clf_cbf_program(
+        prog, V, b = dut._construct_search_clf_cbf_program(
             compatible_lagrangians,
             unsafe_lagrangians,
             clf_degree=2,
@@ -615,8 +607,6 @@ class TestClfCbfToy:
         assert sym.Monomial() not in V.monomial_to_coefficient_map()
         assert utils.is_sos(V_result)
         assert V_result.TotalDegree() == 2
-        rho_result = result.GetSolution(rho)
-        assert rho_result >= 0
 
         b_result = np.array([result.GetSolution(b[i]) for i in range(b.size)])
         assert all([b_result[i].TotalDegree() <= 2 for i in range(b.size)])
@@ -633,7 +623,6 @@ class TestClfCbfToy:
             unsafe_lagrangians,
             V,
             b,
-            rho,
         ) = self.search_lagrangians()
 
         # Find the large ellipsoid inside the compatible region.
@@ -645,7 +634,6 @@ class TestClfCbfToy:
         ) = dut._find_max_inner_ellipsoid(
             V,
             b,
-            rho,
             V_contain_lagrangian_degree=mut.ContainmentLagrangianDegree(
                 inner_ineq=[-1], inner_eq=[], outer=0
             ),
@@ -658,7 +646,7 @@ class TestClfCbfToy:
             trust_region=1000,
         )
 
-        V_new, b_new, rho_new, result = dut.search_clf_cbf_given_lagrangian(
+        V_new, b_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
             unsafe_lagrangians,
             clf_degree=2,
@@ -678,7 +666,7 @@ class TestClfCbfToy:
             S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, x_samples
         )
         assert b_new is not None
-        in_compatible = dut.in_compatible_region(V_new, b_new, rho_new, x_samples)
+        in_compatible = dut.in_compatible_region(V_new, b_new, x_samples)
         assert np.all(in_compatible[in_ellipsoid])
 
     def test_binary_search_clf_cbf_given_lagrangian(self):
@@ -688,7 +676,6 @@ class TestClfCbfToy:
             unsafe_lagrangians,
             V_init,
             b_init,
-            rho_init,
         ) = self.search_lagrangians()
 
         x_equilibrium = np.array([0.0, 0.0])
@@ -699,7 +686,6 @@ class TestClfCbfToy:
         ) = dut._find_max_inner_ellipsoid(
             V_init,
             b_init,
-            rho_init,
             V_contain_lagrangian_degree=mut.ContainmentLagrangianDegree(
                 inner_ineq=[-1], inner_eq=[], outer=0
             ),
@@ -715,7 +701,7 @@ class TestClfCbfToy:
         solver_options = solvers.SolverOptions()
         solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
 
-        V, b, rho = dut.binary_search_clf_cbf(
+        V, b = dut.binary_search_clf_cbf(
             compatible_lagrangians,
             unsafe_lagrangians,
             clf_degree=2,
@@ -734,7 +720,6 @@ class TestClfCbfToy:
         )
         assert V is not None
         assert b is not None
-        assert rho is not None
         # Sample many points, make sure that {x | b[i] >= 0} doesn't intersect
         # with the i'th unsafe region.
         x_samples = 5 * np.random.randn(1000, 2) - np.array([[5, 0]])
@@ -747,14 +732,11 @@ class TestClfCbfToy:
             _,
             V_init,
             b_init,
-            rho_init,
         ) = self.search_lagrangians()
         # Since we have proved that V_init and b_init are compatible, then for
         # any state within the compatible region, there should extis control u.
         x_samples = np.random.randn(100, 2)
-        in_compatible_flag = dut.in_compatible_region(
-            V_init, b_init, rho_init, x_samples
-        )
+        in_compatible_flag = dut.in_compatible_region(V_init, b_init, x_samples)
         for i in range(x_samples.shape[0]):
             if in_compatible_flag[i]:
                 is_compatible, result = dut.check_compatible_at_state(
@@ -808,7 +790,6 @@ class TestClfCbfWStateEqConstraints:
         List[mut.UnsafeRegionLagrangians],
         sym.Polynomial,
         np.ndarray,
-        float,
     ]:
         use_y_squared = True
         dut = mut.CompatibleClfCbf(
@@ -822,7 +803,7 @@ class TestClfCbfWStateEqConstraints:
             use_y_squared=use_y_squared,
             state_eq_constraints=self.state_eq_constraints,
         )
-        V_init = sym.Polynomial(self.x[0] ** 2 + self.x[1] ** 2 + self.x[2] ** 2)
+        V_init = sym.Polynomial(self.x[0] ** 2 + self.x[1] ** 2 + self.x[2] ** 2) / 0.01
         b_init = np.array(
             [sym.Polynomial(0.001 - self.x[0] ** 2 - self.x[1] ** 2 - self.x[2] ** 2)]
         )
@@ -835,7 +816,6 @@ class TestClfCbfWStateEqConstraints:
             b_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
             state_eq_constraints=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         )
-        rho = 0.01
 
         (
             compatible_prog,
@@ -846,7 +826,6 @@ class TestClfCbfWStateEqConstraints:
             self.kappa_V,
             self.kappa_b,
             lagrangian_degrees,
-            rho,
             self.barrier_eps,
         )
         solver_options = solvers.SolverOptions()
@@ -884,7 +863,6 @@ class TestClfCbfWStateEqConstraints:
             unsafe_lagrangians,
             V_init,
             b_init,
-            rho,
         )
 
     def test_search_lagrangians(self):
@@ -897,7 +875,6 @@ class TestClfCbfWStateEqConstraints:
             unsafe_lagrangians,
             V_init,
             b_init,
-            rho_init,
         ) = self.search_lagrangians(check_result=False)
 
         (
@@ -907,7 +884,6 @@ class TestClfCbfWStateEqConstraints:
         ) = dut._find_max_inner_ellipsoid(
             V_init,
             b_init,
-            rho_init,
             V_contain_lagrangian_degree=utils.ContainmentLagrangianDegree(
                 inner_ineq=[-1], inner_eq=[0], outer=0
             ),
@@ -922,7 +898,7 @@ class TestClfCbfWStateEqConstraints:
             trust_region=10,
         )
 
-        V, b, rho, result = dut.search_clf_cbf_given_lagrangian(
+        V, b, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
             unsafe_lagrangians,
             clf_degree=2,
@@ -939,4 +915,3 @@ class TestClfCbfWStateEqConstraints:
         assert V is not None
         assert sym.Monomial() not in V.monomial_to_coefficient_map().keys()
         assert b is not None
-        assert rho is not None

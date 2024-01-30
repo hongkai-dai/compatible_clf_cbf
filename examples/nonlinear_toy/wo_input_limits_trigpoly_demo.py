@@ -27,9 +27,8 @@ def main():
         use_y_squared=use_y_squared,
         state_eq_constraints=state_eq_constraints,
     )
-    V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2 + x[2] ** 2)
+    V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2 + x[2] ** 2) / 0.1
     b_init = np.array([sym.Polynomial(0.1 - x[0] ** 2 - x[1] ** 2 - x[2] ** 2)])
-    rho_init = 0.1
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
@@ -54,10 +53,9 @@ def main():
     cbf_degrees = [2]
     max_iter = 5
 
-    V, b, rho = compatible.bilinear_alternation(
+    V, b = compatible.bilinear_alternation(
         V_init,
         b_init,
-        rho_init,
         compatible_lagrangian_degrees,
         unsafe_region_lagrangian_degrees,
         kappa_V,
@@ -71,7 +69,6 @@ def main():
         find_inner_ellipsoid_max_iter=1,
     )
     print(f"V={V}")
-    print(f"rho={rho}")
     print(f"b={b}")
 
 
