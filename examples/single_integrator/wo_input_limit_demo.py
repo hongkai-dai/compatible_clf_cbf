@@ -3,6 +3,7 @@ Find the CLF and CBF jointly, versus finding CLF and CBF separately for a
 2-dimensional single-integrator system xdot = u. I assume the obstacle is a
 sphere.
 """
+
 from typing import Tuple
 
 import numpy as np

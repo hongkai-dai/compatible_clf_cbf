@@ -367,3 +367,20 @@ def draw_ellipsoid2d(
         + d.reshape((-1, 1))
     )
     return ax.plot(xy_pts[0], xy_pts[1], **kwargs)
+
+
+class Ellipsoid:
+    """
+    An ellipsoid as
+    {x | xᵀSx+bᵀx+c≤0}
+    """
+
+    def __init__(self, S: np.ndarray, b: np.ndarray, c: float):
+        assert S.shape[0] == S.shape[1]
+        assert b.shape == (S.shape[0],)
+        self.S = (S + S.T) / 2
+        self.b = b
+        self.c = c
+
+    def to_affine_ball(self) -> Tuple[np.ndarray, np.ndarray]:
+        return to_affine_ball(self.S, self.b, self.c)

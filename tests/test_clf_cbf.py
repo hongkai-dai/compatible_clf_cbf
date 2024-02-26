@@ -37,6 +37,105 @@ class TestCompatibleLagrangianDegrees(object):
             assert np.sum([monomial.degree(y[i]) for i in range(y.size)]) <= 2
 
 
+class TestCompatibleStatesOptions:
+    def test_add_cost(self):
+        dut = mut.CompatibleStatesOptions(
+            candidate_compatible_states=np.array([[0.2, 0.5], [-0.1, 1.2], [0.3, 2]]),
+            anchor_states=None,
+            b_anchor_bounds=None,
+            weight_V=1.5,
+            weight_b=np.array([1.2, 1.5]),
+        )
+        prog = solvers.MathematicalProgram()
+        x = prog.NewIndeterminates(2, "x")
+        x_set = sym.Variables(x)
+        V = prog.NewFreePolynomial(x_set, 2)
+        b = np.array([prog.NewFreePolynomial(x_set, 3) for i in range(2)])
+        cost, V_relu, b_relu = dut.add_cost(prog, x, V, b)
+        assert V_relu is not None
+
+        def check_feasible(
+            V_val: sym.Polynomial,
+            b_val: np.ndarray,
+        ):
+            constraint1 = prog.AddEqualityConstraintBetweenPolynomials(V, V_val)
+            constraint2 = prog.AddEqualityConstraintBetweenPolynomials(b[0], b_val[0])
+            constraint3 = prog.AddEqualityConstraintBetweenPolynomials(b[1], b_val[1])
+            result = solvers.Solve(prog)
+
+            V_relu_expected = np.maximum(
+                V_val.EvaluateIndeterminates(x, dut.candidate_compatible_states.T) - 1,
+                np.zeros(dut.candidate_compatible_states.shape[0]),
+            )
+            b_relu_expected = np.array(
+                [
+                    np.maximum(
+                        -b_val[i].EvaluateIndeterminates(
+                            x, dut.candidate_compatible_states.T
+                        ),
+                        np.zeros(dut.candidate_compatible_states.shape[0]),
+                    ).reshape((-1,))
+                    for i in range(2)
+                ]
+            )
+            np.testing.assert_allclose(result.GetSolution(V_relu), V_relu_expected)
+            np.testing.assert_allclose(result.GetSolution(b_relu), b_relu_expected)
+
+            cost_expected = dut.weight_V * V_relu_expected.sum() + dut.weight_b.dot(
+                b_relu_expected.sum(axis=1)
+            )
+            np.testing.assert_allclose(result.get_optimal_cost(), cost_expected)
+            for constraints in [constraint1, constraint2, constraint3]:
+                for c in constraints:
+                    prog.RemoveConstraint(c)
+
+        check_feasible(
+            sym.Polynomial(2 * x[0] * x[0] + 3 * x[1] * x[0] + 2 + 2 * x[1]),
+            np.array(
+                [
+                    sym.Polynomial(x[0] * x[1] * x[0] + 3),
+                    sym.Polynomial(x[0] * x[1] * x[1] - x[0] ** 3 + 2 * x[0] + 1),
+                ]
+            ),
+        )
+        check_feasible(
+            sym.Polynomial(-2 * x[0] * x[0] + 3 * x[1] * x[0] + 2 + 2 * x[1]),
+            np.array(
+                [
+                    sym.Polynomial(x[0] * x[1] + 3),
+                    sym.Polynomial(x[0] * x[1] * x[1] - x[0] ** 3 + 2 * x[0] + 1),
+                ]
+            ),
+        )
+
+    def test_add_constraint(self):
+        dut = mut.CompatibleStatesOptions(
+            candidate_compatible_states=np.array([[0.2, 0.5], [-0.1, 1.2], [0.3, 2]]),
+            anchor_states=np.array([[0.5, 0.3], [0.2, 0.1], [0.9, 2]]),
+            b_anchor_bounds=[(np.array([-0.5, 0.3, -3]), np.array([1, 4, 0.5]))],
+            weight_V=1.5,
+            weight_b=np.array([1.2, 1.5]),
+        )
+
+        prog = solvers.MathematicalProgram()
+        x = prog.NewIndeterminates(2, "x")
+        x_set = sym.Variables(x)
+        b = np.array([prog.NewFreePolynomial(x_set, 2)])
+
+        constraints = dut.add_constraint(prog, x, b)
+        assert constraints is not None
+        assert len(constraints) == 1
+
+        result = solvers.Solve(prog)
+        assert result.is_success()
+        b_result = np.array([result.GetSolution(b_i) for b_i in b])
+        assert dut.anchor_states is not None
+        b_result_at_anchor = b_result[0].EvaluateIndeterminates(x, dut.anchor_states.T)
+        assert dut.b_anchor_bounds is not None
+        assert np.all(b_result_at_anchor >= dut.b_anchor_bounds[0][0] - 1e-6)
+        assert np.all(b_result_at_anchor <= dut.b_anchor_bounds[0][1] + 1e-6)
+
+
 class TestClfCbf(object):
     @classmethod
     def setup_class(cls):
@@ -655,9 +754,9 @@ class TestClfCbfToy:
             kappa_V=self.kappa_V,
             kappa_b=self.kappa_b,
             barrier_eps=self.barrier_eps,
-            S_ellipsoid_inner=S_ellipsoid_inner,
-            b_ellipsoid_inner=b_ellipsoid_inner,
-            c_ellipsoid_inner=c_ellipsoid_inner,
+            ellipsoid_inner=ellipsoid_utils.Ellipsoid(
+                S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+            ),
         )
         assert result.is_success()
         # Check that the compatible region contains the inner_ellipsoid.
@@ -710,9 +809,9 @@ class TestClfCbfToy:
             kappa_V=self.kappa_V,
             kappa_b=self.kappa_b,
             barrier_eps=self.barrier_eps,
-            S_ellipsoid_inner=S_ellipsoid_inner,
-            b_ellipsoid_inner=b_ellipsoid_inner,
-            c_ellipsoid_inner=c_ellipsoid_inner,
+            ellipsoid_inner=ellipsoid_utils.Ellipsoid(
+                S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+            ),
             scale_min=1,
             scale_max=50,
             scale_tol=0.1,
@@ -782,9 +881,7 @@ class TestClfCbfWStateEqConstraints:
         cls.kappa_b = np.array([cls.kappa_V])
         cls.barrier_eps = np.array([0.01])
 
-    def search_lagrangians(
-        self, check_result=False
-    ) -> Tuple[
+    def search_lagrangians(self, check_result=False) -> Tuple[
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
         List[mut.UnsafeRegionLagrangians],
@@ -907,9 +1004,9 @@ class TestClfCbfWStateEqConstraints:
             kappa_V=self.kappa_V,
             kappa_b=self.kappa_b,
             barrier_eps=self.barrier_eps,
-            S_ellipsoid_inner=S_ellipsoid_inner,
-            b_ellipsoid_inner=b_ellipsoid_inner,
-            c_ellipsoid_inner=c_ellipsoid_inner,
+            ellipsoid_inner=ellipsoid_utils.Ellipsoid(
+                S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+            ),
         )
         assert result.is_success()
         assert V is not None

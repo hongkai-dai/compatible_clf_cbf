@@ -220,10 +220,12 @@ class UnsafeRegionLagrangians:
             unsafe_region=get_polynomial_result(
                 result, self.unsafe_region, coefficient_tol
             ),
-            state_eq_constraints=None
-            if self.state_eq_constraints is None
-            else get_polynomial_result(
-                result, self.state_eq_constraints, coefficient_tol
+            state_eq_constraints=(
+                None
+                if self.state_eq_constraints is None
+                else get_polynomial_result(
+                    result, self.state_eq_constraints, coefficient_tol
+                )
             ),
         )
 
@@ -261,6 +263,123 @@ class UnsafeRegionLagrangianDegrees:
             unsafe_region=unsafe_region,
             state_eq_constraints=state_eq_constraints,
         )
+
+
+@dataclass
+class CompatibleStatesOptions:
+    """
+    This option is used to encourage the compatible region to include certain
+    candidate states. Namely b(x_candidate) >= 0 and V(x_candidate) <= 1.
+    """
+
+    candidate_compatible_states: np.ndarray
+    # To avoid arbitrarily scaling the CBF, we need to impose the
+    # constraint that
+    # b_anchor_bounds[i][0] <= b[i](anchor_states) <= b_anchor_bounds[i][1]
+    anchor_states: Optional[np.ndarray]
+    b_anchor_bounds: Optional[List[Tuple[np.ndarray, np.ndarray]]]
+
+    # To encourage the compatible region to cover the candidate states, we add
+    # this cost
+    # weight_V * ReLU(V(x_candidates) - 1)
+    #    + weight_b[i] * ReLU(-b[i](x_candidates))
+    weight_V: Optional[float]
+    weight_b: np.ndarray
+
+    def add_cost(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: np.ndarray,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+    ) -> Tuple[solvers.Binding[solvers.LinearCost], Optional[np.ndarray], np.ndarray]:
+        """
+        Adds the cost
+        weight_V * ReLU(V(x_candidates) - 1)
+           + weight_b[i] * ReLU(-b[i](x_candidates))
+        """
+        assert b.shape == self.weight_b.shape
+        num_candidates = self.candidate_compatible_states.shape[0]
+        if V is not None:
+            # Add the slack variable representing ReLU(V(x_candidates)-1)
+            V_relu = prog.NewContinuousVariables(num_candidates, "V_relu")
+            prog.AddBoundingBoxConstraint(0, np.inf, V_relu)
+            # Now evaluate V(x_candidates) as A_v * V_decision_vars + b_v
+            A_v, V_decision_vars, b_v = V.EvaluateWithAffineCoefficients(
+                x, self.candidate_compatible_states.T
+            )
+            # Now impose the constraint V_relu >= V(x_candidates) - 1 as
+            # V_relu - A_v * V_decision_vars >= b_v -1
+            prog.AddLinearConstraint(
+                np.concatenate((-A_v, np.eye(num_candidates)), axis=1),
+                b_v - 1,
+                np.full_like(b_v, np.inf),
+                np.concatenate((V_decision_vars, V_relu)),
+            )
+        else:
+            V_relu = None
+        # Add the slack variable b_relu[i] representing ReLU(-b[i](x_candidates))
+        b_relu = prog.NewContinuousVariables(b.shape[0], num_candidates, "b_relu")
+        prog.AddBoundingBoxConstraint(0, np.inf, b_relu.reshape((-1,)))
+        for i in range(b.shape[0]):
+            A_b, b_decision_vars, b_b = b[i].EvaluateWithAffineCoefficients(
+                x, self.candidate_compatible_states.T
+            )
+            # Now impose the constraint b_relu[i] >= -b[i](x_candidates) as
+            # A_b * b_decision_vars + b_relu[i] >= - b_b
+            prog.AddLinearConstraint(
+                np.concatenate((A_b, np.eye(num_candidates)), axis=1),
+                -b_b,
+                np.full_like(b_b, np.inf),
+                np.concatenate((b_decision_vars, b_relu[i])),
+            )
+
+        cost_coeff = (self.weight_b.reshape((-1, 1)) * np.ones_like(b_relu)).reshape(
+            (-1,)
+        )
+        cost_vars = b_relu.reshape((-1,))
+        if V is not None:
+            assert self.weight_V is not None
+            cost_coeff = np.concatenate(
+                (cost_coeff, self.weight_V * np.ones(num_candidates))
+            )
+            assert V_relu is not None
+            cost_vars = np.concatenate((cost_vars, V_relu))
+        cost = prog.AddLinearCost(cost_coeff, 0.0, cost_vars)
+        return cost, V_relu, b_relu
+
+    def add_constraint(
+        self, prog: solvers.MathematicalProgram, x: np.ndarray, b: np.ndarray
+    ) -> Optional[List[solvers.Binding[solvers.LinearConstraint]]]:
+        """
+        Add the constraint
+        b_anchor_bounds[i][0] <= b[i](anchor_states) <= b_anchor_bounds[i][1]
+        """
+        if self.b_anchor_bounds is not None:
+            assert b.shape == (len(self.b_anchor_bounds),)
+            assert self.anchor_states is not None
+            constraints: List[solvers.Binding[solvers.LinearConstraint]] = [None] * len(
+                self.b_anchor_bounds
+            )
+            for i in range(len(self.b_anchor_bounds)):
+                assert (
+                    self.b_anchor_bounds[i][0].size
+                    == self.b_anchor_bounds[i][1].size
+                    == self.anchor_states.shape[0]
+                )
+                # Evaluate b[i](anchor_states) as A_b * decision_vars_b + b_b
+                A_b, decision_vars_b, b_b = b[i].EvaluateWithAffineCoefficients(
+                    x, self.anchor_states.T
+                )
+                # Adds the constraint
+                constraints[i] = prog.AddLinearConstraint(
+                    A_b,
+                    self.b_anchor_bounds[i][0] - b_b,
+                    self.b_anchor_bounds[i][1] - b_b,
+                    decision_vars_b,
+                )
+            return constraints
+        return None
 
 
 class CompatibleClfCbf:
@@ -518,9 +637,7 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
-        S_ellipsoid_inner: np.ndarray,
-        b_ellipsoid_inner: np.ndarray,
-        c_ellipsoid_inner: float,
+        ellipsoid_inner: Optional[ellipsoid_utils.Ellipsoid],
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
     ) -> Tuple[
@@ -548,9 +665,10 @@ class CompatibleClfCbf:
             barrier_eps,
         )
 
-        self._add_ellipsoid_in_compatible_region_constraint(
-            prog, V, b, S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
-        )
+        if ellipsoid_inner is not None:
+            self._add_ellipsoid_in_compatible_region_constraint(
+                prog, V, b, ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c
+            )
 
         result = solve_with_id(prog, solver_id, solver_options)
         if result.is_success():
@@ -571,9 +689,7 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
-        S_ellipsoid_inner: np.ndarray,
-        b_ellipsoid_inner: np.ndarray,
-        c_ellipsoid_inner: float,
+        ellipsoid_inner: ellipsoid_utils.Ellipsoid,
         scale_min: float,
         scale_max: float,
         scale_tol: float,
@@ -605,7 +721,7 @@ class CompatibleClfCbf:
             solvers.MathematicalProgramResult,
         ]:
             c_new = ellipsoid_utils.scale_ellipsoid(
-                S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner, scale
+                ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c, scale
             )
             V, b, result = self.search_clf_cbf_given_lagrangian(
                 compatible_lagrangians,
@@ -616,9 +732,7 @@ class CompatibleClfCbf:
                 kappa_V,
                 kappa_b,
                 barrier_eps,
-                S_ellipsoid_inner,
-                b_ellipsoid_inner,
-                c_new,
+                ellipsoid_utils.Ellipsoid(ellipsoid_inner.S, ellipsoid_inner.b, c_new),
                 solver_id,
                 solver_options,
             )
@@ -789,9 +903,9 @@ class CompatibleClfCbf:
                 kappa_V,
                 kappa_b,
                 barrier_eps,
-                S_ellipsoid_inner,
-                b_ellipsoid_inner,
-                c_ellipsoid_inner,
+                ellipsoid_utils.Ellipsoid(
+                    S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+                ),
                 binary_search_scale_min,
                 binary_search_scale_max,
                 binary_search_scale_tol,
@@ -1044,7 +1158,11 @@ class CompatibleClfCbf:
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
         local_clf: bool = True,
-    ) -> Tuple[solvers.MathematicalProgram, Optional[sym.Polynomial], np.ndarray,]:
+    ) -> Tuple[
+        solvers.MathematicalProgram,
+        Optional[sym.Polynomial],
+        np.ndarray,
+    ]:
         """
         Construct a program to search for compatible CLF/CBFs given the Lagrangians.
         Notice that we have not imposed the cost to the program yet.
@@ -1275,12 +1393,14 @@ class CompatibleClfCbf:
         else:
             return ContainmentLagrangianDegree(
                 inner_ineq=[-1],
-                inner_eq=[]
-                if self.state_eq_constraints is None
-                else [
-                    np.maximum(0, V.TotalDegree() - poly.TotalDegree())
-                    for poly in self.state_eq_constraints
-                ],
+                inner_eq=(
+                    []
+                    if self.state_eq_constraints is None
+                    else [
+                        np.maximum(0, V.TotalDegree() - poly.TotalDegree())
+                        for poly in self.state_eq_constraints
+                    ]
+                ),
                 outer=0,
             )
 
@@ -1290,12 +1410,14 @@ class CompatibleClfCbf:
         return [
             ContainmentLagrangianDegree(
                 inner_ineq=[-1],
-                inner_eq=[]
-                if self.state_eq_constraints is None
-                else [
-                    np.maximum(0, b_i.TotalDegree() - poly.TotalDegree())
-                    for poly in self.state_eq_constraints
-                ],
+                inner_eq=(
+                    []
+                    if self.state_eq_constraints is None
+                    else [
+                        np.maximum(0, b_i.TotalDegree() - poly.TotalDegree())
+                        for poly in self.state_eq_constraints
+                    ]
+                ),
                 outer=0,
             )
             for b_i in b
