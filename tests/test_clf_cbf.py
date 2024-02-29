@@ -216,6 +216,42 @@ class TestClfCbf(object):
         assert dut.y.shape == (len(self.unsafe_regions),)
         check_members(dut)
 
+        # Now construct with Au and bu
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=np.array([[-3, -2], [1.0, 4.0], [0.0, 3.0]]),
+            bu=np.array([4, 5.0, 6.0]),
+            with_clf=False,
+            use_y_squared=True,
+        )
+        assert dut.Au is not None
+        assert dut.Au.shape == (3, self.nu)
+        assert dut.bu is not None
+        assert dut.bu.shape == (3,)
+        assert dut.y.shape == (len(self.unsafe_regions) + dut.Au.shape[0],)
+        check_members(dut)
+
+        # Now construct with Au, bu and with_clf=True
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=np.array([[-3, -2], [1, 4], [3, -1.0]]),
+            bu=np.array([4, 5.0, 6.0]),
+            with_clf=True,
+            use_y_squared=True,
+        )
+        assert dut.Au is not None
+        assert dut.Au.shape == (3, self.nu)
+        assert dut.bu is not None
+        assert dut.bu.shape == (3,)
+        assert dut.y.shape == (len(self.unsafe_regions) + 1 + dut.Au.shape[0],)
+        check_members(dut)
+
     def test_calc_xi_Lambda_w_clf(self):
         """
         Test _calc_xi_Lambda with CLF.
@@ -296,6 +332,70 @@ class TestClfCbf(object):
         lambda_mat_expected = np.empty((2, self.nu), dtype=object)
         lambda_mat_expected = -dbdx @ self.g
         utils.check_polynomial_arrays_equal(lambda_mat, lambda_mat_expected, 1e-8)
+
+    def test_calc_xi_Lambda_w_clf_Aubu(self):
+        """
+        Test _calc_xi_Lambda with CLF and Au * u <= bu
+        """
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            unsafe_regions=self.unsafe_regions,
+            Au=np.array([[-3, 2], [1, 4], [3, 8.0]]),
+            bu=np.array([3.0, 5.0, 10.0]),
+            with_clf=True,
+            use_y_squared=True,
+        )
+        V = sym.Polynomial(
+            self.x[0] ** 2 + self.x[1] ** 2 + self.x[2] ** 2 + self.x[0] * 2
+        )
+        b = np.array(
+            [
+                sym.Polynomial(1 - self.x[0] ** 2 - self.x[1] ** 2 - self.x[2] ** 2),
+                sym.Polynomial(2 - self.x[0] ** 4 - self.x[2] ** 2 * self.x[1] ** 2),
+            ]
+        )
+        kappa_V = 0.01
+        kappa_b = np.array([0.02, 0.03])
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b)
+
+        dVdx = V.Jacobian(self.x)
+        dbdx = np.empty((2, self.nx), dtype=object)
+        dbdx[0] = b[0].Jacobian(self.x)
+        dbdx[1] = b[1].Jacobian(self.x)
+
+        # Check xi
+        assert dut.bu is not None
+        xi_expected = np.empty((b.size + 1 + dut.bu.size,), dtype=object)
+        xi_expected[0] = dbdx[0].dot(self.f) + kappa_b[0] * b[0]
+        xi_expected[1] = dbdx[1].dot(self.f) + kappa_b[1] * b[1]
+        xi_expected[2] = -dVdx.dot(self.f) - kappa_V * V
+        assert dut.Au is not None
+        xi_expected[-dut.Au.shape[0] :] = dut.bu
+
+        assert xi.shape == xi_expected.shape
+        for i in range(xi.size):
+            if isinstance(xi[i], float):
+                np.testing.assert_equal(xi[i], xi_expected[i])
+            else:
+                assert xi[i].CoefficientsAlmostEqual(xi_expected[i], 1e-8)
+
+        # Check Lambda
+        lambda_mat_expected = np.empty((xi_expected.size, self.nu), dtype=object)
+        lambda_mat_expected[0] = -dbdx[0] @ self.g
+        lambda_mat_expected[1] = -dbdx[1] @ self.g
+        lambda_mat_expected[2] = dVdx @ self.g
+        lambda_mat_expected[-dut.Au.shape[0] :] = dut.Au
+        assert lambda_mat.shape == lambda_mat_expected.shape
+        for i in range(lambda_mat.shape[0]):
+            for j in range(lambda_mat.shape[1]):
+                if isinstance(lambda_mat[i, j], float):
+                    np.testing.assert_equal(lambda_mat[i, j], lambda_mat_expected[i, j])
+                else:
+                    assert lambda_mat[i, j].CoefficientsAlmostEqual(
+                        lambda_mat_expected[i, j], 1e-8
+                    )
 
     def test_search_compatible_lagrangians_w_clf_y_squared(self):
         """
