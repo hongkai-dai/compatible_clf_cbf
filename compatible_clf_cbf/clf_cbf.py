@@ -403,6 +403,16 @@ class CompatibleClfCbf:
 
     The same math applies to multiple CBFs, or when u is constrained within a
     polyhedron.
+
+    If u is constrained within a polytope {u | Au * u <= bu}, we know that there exists
+    u in the polytope satisfying the CLF and CBF condition, iff the following set is
+    empty
+
+    {(x, y) | yᵀ * [-∂b/∂x*g(x)] = 0, yᵀ * [ ∂b/∂x*f(x)+κ_b*b(x)] = -1 }                   (2)
+                   [ ∂V/∂x*g(x)]           [-∂V/∂x*f(x)-κ_V*V(x)]
+                   [         Au]           [                 bu ]
+    Namely we increase the dimensionality of y and append the equality condition in (1)
+    with Au and bu.
     """  # noqa E501
 
     def __init__(
@@ -485,7 +495,11 @@ class CompatibleClfCbf:
         self.bu = bu
         self.with_clf = with_clf
         self.use_y_squared = use_y_squared
-        y_size = len(self.unsafe_regions) + (1 if self.with_clf else 0)
+        y_size = (
+            len(self.unsafe_regions)
+            + (1 if self.with_clf else 0)
+            + (self.Au.shape[0] if self.Au is not None else 0)
+        )
         self.y: np.ndarray = sym.MakeVectorContinuousVariable(y_size, "y")
         self.y_set: sym.Variables = sym.Variables(self.y)
         self.xy_set: sym.Variables = sym.Variables(np.concatenate((self.x, self.y)))
@@ -979,8 +993,10 @@ class CompatibleClfCbf:
         Compute
         Λ(x) = [-∂b/∂x*g(x)]
                [ ∂V/∂x*g(x)]
+               [        Au ]
         ξ(x) = [ ∂b/∂x*f(x)+κ_b*b(x)]
                [-∂V/∂x*f(x)-κ_V*V(x)]
+               [                 bu ]
 
         Args:
           V: The CLF function. If with_clf is False, then V is None.
@@ -992,6 +1008,7 @@ class CompatibleClfCbf:
         """
         num_unsafe_regions = len(self.unsafe_regions)
         if self.with_clf:
+            assert V is not None
             assert isinstance(V, sym.Polynomial)
             dVdx = V.Jacobian(self.x)
             xi_rows = num_unsafe_regions + 1
@@ -999,6 +1016,9 @@ class CompatibleClfCbf:
             assert V is None
             dVdx = None
             xi_rows = num_unsafe_regions
+            assert b.size > 1, "You should use multiple CBF when with_clf is False."
+        if self.Au is not None:
+            xi_rows += self.Au.shape[0]
         assert b.shape == (len(self.unsafe_regions),)
         assert kappa_b.shape == b.shape
         dbdx = np.concatenate(
@@ -1008,12 +1028,15 @@ class CompatibleClfCbf:
         lambda_mat[:num_unsafe_regions] = -dbdx @ self.g
         xi = np.empty((xi_rows,), dtype=object)
         xi[:num_unsafe_regions] = dbdx @ self.f + kappa_b * b
-        # TODO(hongkai.dai): support input bounds Au * u <= bu
-        assert self.Au is None and self.bu is None
 
         if self.with_clf:
-            lambda_mat[-1] = dVdx @ self.g
-            xi[-1] = -dVdx.dot(self.f) - kappa_V * V
+            assert V is not None
+            assert dVdx is not None
+            lambda_mat[num_unsafe_regions] = dVdx @ self.g
+            xi[num_unsafe_regions] = -dVdx.dot(self.f) - kappa_V * V
+        if self.Au is not None:
+            lambda_mat[-self.Au.shape[0] :] = self.Au
+            xi[-self.Au.shape[0] :] = self.bu
 
         return (xi, lambda_mat)
 
