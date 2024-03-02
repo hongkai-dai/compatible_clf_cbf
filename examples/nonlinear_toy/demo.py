@@ -1,5 +1,7 @@
 """
-Find the compatible CLF/CBF with no input limits.
+Find the compatible CLF/CBF with or without input limits.
+This uses the nonlinear dynamics without the state equation constraints from the
+trigonometric polynomials.
 """
 
 import numpy as np
@@ -10,17 +12,23 @@ from compatible_clf_cbf import clf_cbf
 from examples.nonlinear_toy import toy_system
 
 
-def main(use_y_squared: bool):
+def main(use_y_squared: bool, with_u_bound: bool):
     x = sym.MakeVectorContinuousVariable(2, "x")
     f, g = toy_system.affine_dynamics(x)
     use_y_squared = True
+    if with_u_bound:
+        Au = np.array([[1], [-1.0]])
+        bu = np.array([20, 20])
+    else:
+        Au = None
+        bu = None
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
         unsafe_regions=[np.array([sym.Polynomial(x[0] + 10)])],
-        Au=None,
-        bu=None,
+        Au=Au,
+        bu=bu,
         with_clf=True,
         use_y_squared=use_y_squared,
     )
@@ -40,8 +48,8 @@ def main(use_y_squared: bool):
                 for _ in range(compatible.y.size)
             ]
         ),
-        rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
+        rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
+        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=None,
     )
     barrier_eps = np.array([0.0001])
@@ -51,7 +59,9 @@ def main(use_y_squared: bool):
     ) = compatible.construct_search_compatible_lagrangians(
         V_init, b_init, kappa_V, kappa_b, lagrangian_degrees, barrier_eps
     )
-    compatible_result = solvers.Solve(compatible_prog)
+    solver_options = solvers.SolverOptions()
+    solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
+    compatible_result = solvers.Solve(compatible_prog, None, solver_options)
     assert compatible_result.is_success()
 
     unsafe_region_lagrangian_degrees = clf_cbf.UnsafeRegionLagrangianDegrees(
@@ -68,5 +78,7 @@ def main(use_y_squared: bool):
 
 
 if __name__ == "__main__":
-    main(use_y_squared=True)
-    main(use_y_squared=False)
+    main(use_y_squared=True, with_u_bound=False)
+    main(use_y_squared=False, with_u_bound=False)
+    main(use_y_squared=True, with_u_bound=True)
+    main(use_y_squared=False, with_u_bound=True)
