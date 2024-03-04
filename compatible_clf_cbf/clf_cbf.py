@@ -946,6 +946,11 @@ class CompatibleClfCbf:
         """
         prog = solvers.MathematicalProgram()
         u = prog.NewContinuousVariables(self.nu, "u")
+        if self.Au is not None:
+            assert self.bu is not None
+            prog.AddLinearConstraint(
+                self.Au, np.full_like(self.bu, -np.inf), self.bu, u
+            )
         assert x_val.shape == (self.nx,)
         env = {self.x[i]: x_val[i] for i in range(self.nx)}
         f_val = np.array([f_i.Evaluate(env) for f_i in self.f])
