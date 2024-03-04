@@ -815,7 +815,10 @@ class TestClfCbfToy:
         x_samples = 10 * np.random.randn(1000, 2) - np.array([[10, 0]])
         self.check_unsafe_region_by_sample(b_result, x_samples)
 
-    def test_search_clf_cbf_given_lagrangian(self):
+    def test_search_clf_cbf_given_lagrangian_w_ellipsoid_inner(self):
+        """
+        Test search_clf_cbf_given_lagrangian with ellipsoid_inner
+        """
         (
             dut,
             compatible_lagrangians,
@@ -868,6 +871,54 @@ class TestClfCbfToy:
         in_compatible = dut.in_compatible_region(V_new, b_new, x_samples)
         assert np.all(in_compatible[in_ellipsoid])
 
+    def test_search_clf_cbf_given_lagrangian_w_compatible_states_options(self):
+        (
+            dut,
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            V,
+            b,
+        ) = self.search_lagrangians()
+
+        compatible_states_options = mut.CompatibleStatesOptions(
+            candidate_compatible_states=np.array([[0.1, 0.1], [-0.1, 0.1]]),
+            anchor_states=np.array([[0, 0.0]]),
+            b_anchor_bounds=[(np.array([0]), np.array([1]))],
+            weight_V=1.0,
+            weight_b=np.array([1.0]),
+        )
+        V_new, b_new, result = dut.search_clf_cbf_given_lagrangian(
+            compatible_lagrangians,
+            unsafe_lagrangians,
+            clf_degree=2,
+            cbf_degrees=[2],
+            x_equilibrium=np.array([0.0, 0.0]),
+            kappa_V=1e-3,
+            kappa_b=np.array([1e-3]),
+            barrier_eps=np.array([1e-3]),
+            ellipsoid_inner=None,
+            compatible_states_options=compatible_states_options,
+        )
+        assert V_new is not None
+        assert b_new is not None
+        assert result.is_success()
+
+        # Check if bounds on b are satisfied.
+        assert compatible_states_options.anchor_states is not None
+        b_result_at_anchor = b_new[0].EvaluateIndeterminates(
+            dut.x, compatible_states_options.anchor_states.T
+        )
+        assert compatible_states_options.b_anchor_bounds is not None
+        assert np.all(
+            b_result_at_anchor >= compatible_states_options.b_anchor_bounds[0][0]
+        )
+        assert np.all(
+            b_result_at_anchor <= compatible_states_options.b_anchor_bounds[0][1]
+        )
+
+        print(f"V_new={V_new}")
+        print(f"b_new={b_new}")
+
     def test_binary_search_clf_cbf_given_lagrangian(self):
         (
             dut,
@@ -899,6 +950,7 @@ class TestClfCbfToy:
 
         solver_options = solvers.SolverOptions()
         solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
+        binary_search_scale_options = utils.BinarySearchOptions(min=1, max=50, tol=0.1)
 
         V, b = dut.binary_search_clf_cbf(
             compatible_lagrangians,
@@ -912,9 +964,7 @@ class TestClfCbfToy:
             ellipsoid_inner=ellipsoid_utils.Ellipsoid(
                 S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
             ),
-            scale_min=1,
-            scale_max=50,
-            scale_tol=0.1,
+            scale_options=binary_search_scale_options,
             solver_options=solver_options,
         )
         assert V is not None

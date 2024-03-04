@@ -8,6 +8,7 @@ import numpy as np
 import pydrake.symbolic as sym
 
 import compatible_clf_cbf.clf_cbf as clf_cbf
+import compatible_clf_cbf.utils as utils
 import examples.nonlinear_toy.toy_system as toy_system
 
 
@@ -66,6 +67,7 @@ def main():
         cbf_degrees,
         max_iter,
         x_inner=x_equilibrium,
+        binary_search_scale_options=utils.BinarySearchOptions(min=1, max=2, tol=0.1),
         find_inner_ellipsoid_max_iter=1,
     )
     print(f"V={V}")
