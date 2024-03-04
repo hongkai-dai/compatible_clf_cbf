@@ -8,6 +8,7 @@ import pydrake.symbolic as sym
 import pydrake.solvers as solvers
 
 from compatible_clf_cbf.utils import (
+    BinarySearchOptions,
     ContainmentLagrangianDegree,
     check_array_of_polynomials,
     get_polynomial_result,
@@ -651,7 +652,9 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
-        ellipsoid_inner: Optional[ellipsoid_utils.Ellipsoid],
+        *,
+        ellipsoid_inner: Optional[ellipsoid_utils.Ellipsoid] = None,
+        compatible_states_options: Optional[CompatibleStatesOptions] = None,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
     ) -> Tuple[
@@ -664,8 +667,8 @@ class CompatibleClfCbf:
         and cbf, such that the compatible region contains that inner ellipsoid.
 
         Returns: (V, b, result)
-          V: The CLF.
-          b: The CBF.
+          V: The CLF result.
+          b: The CBF result.
           result: The result of the optimization program.
         """
         prog, V, b = self._construct_search_clf_cbf_program(
@@ -683,6 +686,8 @@ class CompatibleClfCbf:
             self._add_ellipsoid_in_compatible_region_constraint(
                 prog, V, b, ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c
             )
+        elif compatible_states_options is not None:
+            self._add_compatible_states_options(prog, V, b, compatible_states_options)
 
         result = solve_with_id(prog, solver_id, solver_options)
         if result.is_success():
@@ -704,9 +709,7 @@ class CompatibleClfCbf:
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
         ellipsoid_inner: ellipsoid_utils.Ellipsoid,
-        scale_min: float,
-        scale_max: float,
-        scale_tol: float,
+        scale_options: BinarySearchOptions,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
@@ -719,13 +722,12 @@ class CompatibleClfCbf:
         and binary search on the scaling factor.
 
         Args:
-          scale_min: The minimum of the ellipsoid scaling factor.
-          scale_max: The maximal of the ellipsoid scaling factor.
-          scale_tol: Terminate the binary search when the difference between
-            the max/min scaling factor is below this tolerance.
+          scale_options: The options to do binary search on the scale of the einner
+          ellipsoid.
 
         Return: (V, b)
         """
+        assert isinstance(scale_options, BinarySearchOptions)
 
         def search(
             scale,
@@ -746,14 +748,21 @@ class CompatibleClfCbf:
                 kappa_V,
                 kappa_b,
                 barrier_eps,
-                ellipsoid_utils.Ellipsoid(ellipsoid_inner.S, ellipsoid_inner.b, c_new),
-                solver_id,
-                solver_options,
+                ellipsoid_inner=ellipsoid_utils.Ellipsoid(
+                    ellipsoid_inner.S, ellipsoid_inner.b, c_new
+                ),
+                compatible_states_options=None,
+                solver_id=solver_id,
+                solver_options=solver_options,
             )
             return V, b, result
 
-        assert scale_max >= scale_min
-        assert scale_tol > 0
+        scale_options.check()
+
+        scale_min = scale_options.min
+        scale_max = scale_options.max
+        scale_tol = scale_options.tol
+
         V, b, result = search(scale_max)
         if result.is_success():
             print(f"binary_search_clf_cbf: scale={scale_max} is feasible.")
@@ -832,16 +841,21 @@ class CompatibleClfCbf:
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
         ellipsoid_trust_region: Optional[float] = 100,
-        binary_search_scale_min: float = 1,
-        binary_search_scale_max: float = 2,
-        binary_search_scale_tol: float = 0.1,
+        binary_search_scale_options: Optional[BinarySearchOptions] = None,
         find_inner_ellipsoid_max_iter: int = 3,
+        compatible_states_options: Optional[CompatibleStatesOptions] = None,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
         """
         Synthesize the compatible CLF and CBF through bilinear alternation. We
         alternate between
         1. Fixing the CLF/CBF, searching for Lagrangians.
         2. Fixing Lagrangians, searching for CLF/CBF.
+
+        Our goal is to find the compatible CLF and CBFs with the largest compatible
+        region. We cannot measure the volume of the compatible region directly, so we
+        use one of the following heuristics to grow the compatible region:
+        - Grow the inscribed ellipsoid within the compatible region.
+        - Expand the compatible region to cover some candidate states.
 
         Args:
           x_inner: Each row of x_inner is a state that should be contained in
@@ -854,6 +868,8 @@ class CompatibleClfCbf:
             trust region constraint. This is the squared radius of that trust
             region.
         """
+        assert isinstance(binary_search_scale_options, Optional[BinarySearchOptions])
+        assert isinstance(compatible_states_options, Optional[CompatibleStatesOptions])
 
         iteration = 0
         clf = V_init
@@ -886,46 +902,81 @@ class CompatibleClfCbf:
             assert compatible_lagrangians is not None
             assert all(unsafe_lagrangians)
 
-            # Search for the inner ellipsoid.
-            V_contain_ellipsoid_lagrangian_degree = (
-                self._get_V_contain_ellipsoid_lagrangian_degree(clf)
-            )
-            b_contain_ellipsoid_lagrangian_degree = (
-                self._get_b_contain_ellipsoid_lagrangian_degrees(cbf)
-            )
-            (
-                S_ellipsoid_inner,
-                b_ellipsoid_inner,
-                c_ellipsoid_inner,
-            ) = self._find_max_inner_ellipsoid(
-                clf,
-                cbf,
-                V_contain_ellipsoid_lagrangian_degree,
-                b_contain_ellipsoid_lagrangian_degree,
-                x_inner,
-                solver_id=solver_id,
-                max_iter=find_inner_ellipsoid_max_iter,
-                trust_region=ellipsoid_trust_region,
-            )
+            if find_inner_ellipsoid_max_iter > 0:
+                # We use the heuristics to grow the inner ellipsoid.
+                assert compatible_states_options is None
+                # Search for the inner ellipsoid.
+                V_contain_ellipsoid_lagrangian_degree = (
+                    self._get_V_contain_ellipsoid_lagrangian_degree(clf)
+                )
+                b_contain_ellipsoid_lagrangian_degree = (
+                    self._get_b_contain_ellipsoid_lagrangian_degrees(cbf)
+                )
+                (
+                    S_ellipsoid_inner,
+                    b_ellipsoid_inner,
+                    c_ellipsoid_inner,
+                ) = self._find_max_inner_ellipsoid(
+                    clf,
+                    cbf,
+                    V_contain_ellipsoid_lagrangian_degree,
+                    b_contain_ellipsoid_lagrangian_degree,
+                    x_inner,
+                    solver_id=solver_id,
+                    max_iter=find_inner_ellipsoid_max_iter,
+                    trust_region=ellipsoid_trust_region,
+                )
 
-            clf, cbf = self.binary_search_clf_cbf(
-                compatible_lagrangians,
-                unsafe_lagrangians,
-                clf_degree,
-                cbf_degrees,
-                x_equilibrium,
-                kappa_V,
-                kappa_b,
-                barrier_eps,
-                ellipsoid_utils.Ellipsoid(
-                    S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
-                ),
-                binary_search_scale_min,
-                binary_search_scale_max,
-                binary_search_scale_tol,
-                solver_id,
-                solver_options,
-            )
+                assert binary_search_scale_options is not None
+                clf, cbf = self.binary_search_clf_cbf(
+                    compatible_lagrangians,
+                    unsafe_lagrangians,
+                    clf_degree,
+                    cbf_degrees,
+                    x_equilibrium,
+                    kappa_V,
+                    kappa_b,
+                    barrier_eps,
+                    ellipsoid_utils.Ellipsoid(
+                        S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+                    ),
+                    binary_search_scale_options,
+                    solver_id,
+                    solver_options,
+                )
+            else:
+                # We use the heuristics to cover some candidate states with the
+                # compatible region.
+                assert compatible_states_options is not None
+                clf, cbf, _ = self.search_clf_cbf_given_lagrangian(
+                    compatible_lagrangians,
+                    unsafe_lagrangians,
+                    clf_degree,
+                    cbf_degrees,
+                    x_equilibrium,
+                    kappa_V,
+                    kappa_b,
+                    barrier_eps,
+                    ellipsoid_inner=None,
+                    compatible_states_options=compatible_states_options,
+                    solver_id=solver_id,
+                    solver_options=solver_options,
+                )
+                assert cbf is not None
+                if clf is not None:
+                    V_candidates = clf.EvaluateIndeterminates(
+                        self.x, compatible_states_options.candidate_compatible_states.T
+                    )
+                    b_candidates = [
+                        b_i.EvaluateIndeterminates(
+                            self.x,
+                            compatible_states_options.candidate_compatible_states.T,
+                        )
+                        for b_i in cbf
+                    ]
+                    print(f"V(candidate_compatible_states)={V_candidates}")
+                    for i, b_candidates_val in enumerate(b_candidates):
+                        print(f"b[{i}](candidate_compatible_states)={b_candidates_val}")
         return clf, cbf
 
     def check_compatible_at_state(
@@ -1412,6 +1463,16 @@ class CompatibleClfCbf:
                 inner_eq_poly=self.state_eq_constraints,
                 outer_poly=-b[i],
             )
+
+    def _add_compatible_states_options(
+        self,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        b: np.ndarray,
+        compatible_states_options: CompatibleStatesOptions,
+    ):
+        compatible_states_options.add_cost(prog, self.x, V, b)
+        compatible_states_options.add_constraint(prog, self.x, b)
 
     def _get_V_contain_ellipsoid_lagrangian_degree(
         self, V: Optional[sym.Polynomial]

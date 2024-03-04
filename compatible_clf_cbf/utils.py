@@ -273,3 +273,14 @@ def new_sos_polynomial(
         else:
             sos_poly, gram = prog.NewSosPolynomial(x_set, degree)
         return sos_poly, gram
+
+
+@dataclasses.dataclass
+class BinarySearchOptions:
+    min: float
+    max: float
+    tol: float
+
+    def check(self):
+        assert self.min <= self.max
+        assert self.tol > 0
