@@ -1,5 +1,5 @@
 """
-Find the compatible CLF/CBF with or without input limits.
+Certify the compatible CLF/CBF with or without input limits.
 This uses the nonlinear dynamics without the state equation constraints from the
 trigonometric polynomials.
 """
