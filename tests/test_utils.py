@@ -113,3 +113,48 @@ class TestContainmentLagrangian:
         assert lagrangians_result.inner_ineq[1].TotalDegree() == 0
         assert lagrangians_result.inner_eq[0].TotalDegree() == 1
         assert lagrangians_result.outer.TotalDegree() == 0
+
+
+def test_solve_w_id():
+    prog = solvers.MathematicalProgram()
+    x = prog.NewContinuousVariables(2)
+    prog.AddBoundingBoxConstraint(-1, 1, x)
+    prog.AddLinearCost(x[0] + x[1] + 1)
+    result = mut.solve_with_id(
+        prog, solver_id=None, solver_options=None, backoff_scale=0.1
+    )
+    assert result.is_success()
+    # I know the optimal solution is obtained at (-1, -1), with the optimal cost being
+    # -1. Hence by backing off, the solution should satisfy x[0] + x[1] + 1 <= -0.9
+    x_sol = result.GetSolution(x)
+    assert x_sol[0] + x_sol[1] + 1 <= -0.9 + 1E-5
+    # Now add the objective max x[0] + x[1]. The maximazation should be
+    # x[0] + x[1] = -1.9
+    prog.AddLinearCost(-x[0] - x[1])
+    result = mut.solve_with_id(
+        prog, solver_id=None, solver_options=None, backoff_scale=None
+    )
+    x_sol = result.GetSolution(x)
+    np.testing.assert_allclose(x_sol[0] + x_sol[1], -1.9, atol=1e-5)
+
+    # Now test the problem with a positive optimal cost.
+    prog = solvers.MathematicalProgram()
+    x = prog.NewContinuousVariables(2)
+    prog.AddBoundingBoxConstraint(-1, 1, x)
+    prog.AddLinearCost(x[0] + x[1] + 3)
+    result = mut.solve_with_id(
+        prog, solver_id=None, solver_options=None, backoff_scale=0.1
+    )
+    assert result.is_success()
+    # I know the optimal solution is obtained at (-1, -1), with the optimal cost being
+    # 1. Hence by backing off, the solutionshould satisfy x[0] + x[1] + 3 <= 1.1
+    x_sol = result.GetSolution(x)
+    assert x_sol[0] + x_sol[1] + 3 <= 1.1 + 1E-5
+    # Now add the objective max x[0] + x[1]. The maximization should be
+    # x[0] + x[1] = -1.9
+    prog.AddLinearCost(-x[0] - x[1])
+    result = mut.solve_with_id(
+        prog, solver_id=None, solver_options=None, backoff_scale=None
+    )
+    x_sol = result.GetSolution(x)
+    np.testing.assert_allclose(x_sol[0] + x_sol[1], -1.9, atol=1e-5)
