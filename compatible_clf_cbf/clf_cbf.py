@@ -657,6 +657,7 @@ class CompatibleClfCbf:
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
+        backoff_scale: Optional[float] = None,
     ) -> Tuple[
         Optional[sym.Polynomial],
         Optional[np.ndarray],
@@ -689,7 +690,7 @@ class CompatibleClfCbf:
         elif compatible_states_options is not None:
             self._add_compatible_states_options(prog, V, b, compatible_states_options)
 
-        result = solve_with_id(prog, solver_id, solver_options)
+        result = solve_with_id(prog, solver_id, solver_options, backoff_scale)
         if result.is_success():
             V_sol = None if V is None else result.GetSolution(V)
             b_sol = np.array([result.GetSolution(b_i) for b_i in b])
@@ -844,6 +845,7 @@ class CompatibleClfCbf:
         binary_search_scale_options: Optional[BinarySearchOptions] = None,
         find_inner_ellipsoid_max_iter: int = 3,
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
+        backoff_scale: Optional[float] = None,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
         """
         Synthesize the compatible CLF and CBF through bilinear alternation. We
@@ -948,7 +950,7 @@ class CompatibleClfCbf:
                 # We use the heuristics to cover some candidate states with the
                 # compatible region.
                 assert compatible_states_options is not None
-                clf, cbf, _ = self.search_clf_cbf_given_lagrangian(
+                clf, cbf, result = self.search_clf_cbf_given_lagrangian(
                     compatible_lagrangians,
                     unsafe_lagrangians,
                     clf_degree,
@@ -961,6 +963,7 @@ class CompatibleClfCbf:
                     compatible_states_options=compatible_states_options,
                     solver_id=solver_id,
                     solver_options=solver_options,
+                    backoff_scale=backoff_scale,
                 )
                 assert cbf is not None
                 if clf is not None:
