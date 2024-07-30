@@ -5,6 +5,7 @@ trigonometric polynomials.
 """
 
 import numpy as np
+import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 
 from compatible_clf_cbf import clf_cbf
@@ -53,7 +54,7 @@ def main(with_u_bound: bool):
 
     clf_degree = 2
     cbf_degrees = [2]
-    max_iter = 5
+    max_iter = 10
 
     compatible_states_options = clf_cbf.CompatibleStatesOptions(
         candidate_compatible_states=np.array([[1, 1], [-1, 1]]),
@@ -62,6 +63,10 @@ def main(with_u_bound: bool):
         weight_V=1.0,
         weight_b=np.array([1.0]),
     )
+
+    solver_options = solvers.SolverOptions()
+    solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
+    solver_options.SetOption(solvers.ClarabelSolver.id(), "max_iter", 10000)
 
     V, b = compatible.bilinear_alternation(
         V_init,
@@ -79,6 +84,8 @@ def main(with_u_bound: bool):
         binary_search_scale_options=None,
         find_inner_ellipsoid_max_iter=0,
         compatible_states_options=compatible_states_options,
+        solver_options=solver_options,
+        backoff_scale=0.02,
     )
 
 
