@@ -891,7 +891,8 @@ class CompatibleClfCbf:
             Use None to preserve all coefficients.
         """
 
-        # One and only one of inner_ellipsoid_options and compatible_states_options is None.
+        # One and only one of inner_ellipsoid_options and compatible_states_options is
+        # None.
         assert (
             inner_ellipsoid_options is not None and compatible_states_options is None
         ) or (inner_ellipsoid_options is None and compatible_states_options is not None)
