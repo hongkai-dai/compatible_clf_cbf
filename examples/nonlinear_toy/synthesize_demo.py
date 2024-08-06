@@ -67,6 +67,7 @@ def main(with_u_bound: bool):
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
     solver_options.SetOption(solvers.ClarabelSolver.id(), "max_iter", 10000)
+    inner_ellipsoid_options = None
 
     V, b = compatible.bilinear_alternation(
         V_init,
@@ -80,9 +81,8 @@ def main(with_u_bound: bool):
         clf_degree,
         cbf_degrees,
         max_iter,
-        x_inner=x_equilibrium,
+        inner_ellipsoid_options=None,
         binary_search_scale_options=None,
-        find_inner_ellipsoid_max_iter=0,
         compatible_states_options=compatible_states_options,
         solver_options=solver_options,
         backoff_scale=0.02,

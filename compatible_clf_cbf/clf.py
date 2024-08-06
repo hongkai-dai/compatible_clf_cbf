@@ -9,6 +9,7 @@ from typing_extensions import Self
 import numpy as np
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
+import pydrake.autodiffutils
 
 from compatible_clf_cbf.utils import (
     check_array_of_polynomials,
@@ -342,3 +343,129 @@ class ControlLyapunov:
             sos_poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
         prog.AddSosConstraint(sos_poly)
         return sos_poly
+
+
+class FindClfWoInputLimitsCounterExample:
+    """
+    For a candidate CLF function (without input limits), find the counter-example
+    (that violates the CLF condition) through nonlinear optimization.
+    Namely we solve this problem:
+    max ∂V/∂x*f(x)+κ*V
+    s.t ∂V/∂x*g(x) = 0
+        V(x) <= ρ
+
+    This class constructs the optimization program above (but doesn't solve it).
+    You can access the constructed program through self.prog.
+    """
+
+    def __init__(
+        self,
+        x: np.ndarray,
+        f: np.ndarray,
+        g: np.ndarray,
+        V: sym.Polynomial,
+        rho: float,
+        kappa: float,
+        state_eq_constraints: Optional[np.ndarray],
+    ):
+        self.x = x
+        self.nx = x.size
+        self.f = f
+        assert f.shape == (self.nx,)
+        self.g = g
+        assert g.shape[0] == self.nx
+        self.nu = g.shape[1]
+        self.V = V
+        self.dVdx = V.Jacobian(self.x)
+        self.dVdx_times_f: sym.Polynomial = self.dVdx.dot(f)
+        self.J_dVdx_times_f = self.dVdx_times_f.Jacobian(self.x)
+        self.dVdx_times_g = (self.dVdx.reshape((1, -1)) @ self.g).reshape((-1,))
+        self.J_dVdx_times_g = np.array(
+            [self.dVdx_times_g[i].Jacobian(self.x) for i in range(self.nu)]
+        )
+        self.rho = rho
+        self.kappa = kappa
+        self.h = state_eq_constraints
+        self.h_size = 0 if self.h is None else self.h.size
+        self.J_h = (
+            np.array([self.h[i].Jacobian(x) for i in range(self.h.size)])
+            if self.h is not None
+            else None
+        )
+        self.cost_poly = -(self.dVdx_times_f + self.kappa * V)
+        self.J_cost_poly = -(self.J_dVdx_times_f + self.kappa * self.dVdx)
+
+        def constraint(x_eval):
+            if x_eval.dtype == object:
+                x_val = pydrake.autodiffutils.ExtractValue(x_eval)
+                x_grad = pydrake.autodiffutils.ExtractGradient(x_eval)
+            else:
+                x_val = x_eval
+            env = {x[i]: x_val[i] for i in range(self.nx)}
+            constraint_val = np.empty((1 + self.nu + self.h_size,))
+            constraint_val[: self.nu] = np.array(
+                [self.dVdx_times_g[i].Evaluate(env) for i in range(self.nu)]
+            )
+            constraint_val[self.nu] = self.V.Evaluate(env)
+            if self.h is not None:
+                constraint_val[-self.h_size :] = np.array(
+                    [self.h[i].Evaluate(env) for i in range(self.h_size)]
+                )
+            # Now evaluate the gradient.
+            if x_eval.dtype == object:
+                dconstraint_dx = np.zeros((constraint_val.size, self.nx))
+                dconstraint_dx[: self.nu, :] = np.array(
+                    [
+                        [
+                            self.J_dVdx_times_g[i, j].Evaluate(env)
+                            for j in range(self.nx)
+                        ]
+                        for i in range(self.nu)
+                    ]
+                )
+                dconstraint_dx[self.nu, :] = np.array(
+                    [self.dVdx[i].Evaluate(env) for i in range(self.nx)]
+                )
+                if self.h is not None:
+                    dconstraint_dx[-self.h_size :, :] = np.array(
+                        [
+                            [self.J_h[i, j].Evaluate(env) for j in range(self.nx)]
+                            for i in range(self.h_size)
+                        ]
+                    )
+                d_constraint = dconstraint_dx @ x_grad
+                return pydrake.autodiffutils.InitializeAutoDiff(
+                    constraint_val, d_constraint
+                )
+            else:
+                return constraint_val
+
+        def cost(x_eval):
+            if x_eval.dtype == object:
+                x_val = pydrake.autodiffutils.ExtractValue(x_eval)
+                x_grad = pydrake.autodiffutils.ExtractGradient(x_eval)
+            else:
+                x_val = x_eval
+            env = {x[i]: x_val[i] for i in range(self.nx)}
+            cost_val = self.cost_poly.Evaluate(env)
+
+            if x_eval.dtype == object:
+                cost_grad = np.array(
+                    [self.J_cost_poly[i].Evaluate(env) for i in range(self.nx)]
+                )
+                d_cost = (cost_grad.reshape((1, -1)) @ x_grad).reshape((-1,))
+                return pydrake.autodiffutils.AutoDiffXd(cost_val, d_cost)
+            else:
+                return cost_val
+
+        self.prog = solvers.MathematicalProgram()
+        self.prog.AddDecisionVariables(x)
+        self.prog.AddCost(cost, x)
+        constraint_lb = np.concatenate(
+            (np.zeros((self.nu,)), np.array([-np.inf]), np.zeros((self.h_size,)))
+        )
+        constraint_ub = np.concatenate(
+            (np.zeros((self.nu,)), np.array([self.rho]), np.zeros((self.h_size,)))
+        )
+
+        self.prog.AddConstraint(constraint, constraint_lb, constraint_ub, x)

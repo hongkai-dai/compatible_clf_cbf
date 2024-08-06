@@ -64,12 +64,14 @@ def main(grow_heuristics: GrowHeuristics):
 
     if grow_heuristics == GrowHeuristics.kInnerEllipsoid:
         binary_search_scale_options = utils.BinarySearchOptions(min=1, max=2, tol=0.1)
-        find_inner_ellipsoid_max_iter = 1
+        inner_ellipsoid_options = clf_cbf.InnerEllipsoidOptions(
+            x_inner=x_equilibrium, find_inner_ellipsoid_max_iter=1
+        )
         compatible_states_options = None
         solver_options = None
     elif grow_heuristics == GrowHeuristics.kCompatibleStates:
         binary_search_scale_options = None
-        find_inner_ellipsoid_max_iter = 0
+        inner_ellipsoid_options = None
         compatible_states_options = clf_cbf.CompatibleStatesOptions(
             candidate_compatible_states=np.array(
                 [
@@ -97,9 +99,8 @@ def main(grow_heuristics: GrowHeuristics):
         clf_degree,
         cbf_degrees,
         max_iter,
-        x_inner=x_equilibrium,
+        inner_ellipsoid_options=inner_ellipsoid_options,
         binary_search_scale_options=binary_search_scale_options,
-        find_inner_ellipsoid_max_iter=find_inner_ellipsoid_max_iter,
         compatible_states_options=compatible_states_options,
         solver_options=solver_options,
     )

@@ -267,6 +267,33 @@ class UnsafeRegionLagrangianDegrees:
 
 
 @dataclass
+class InnerEllipsoidOptions:
+    """
+    This option is used to encourage the compatible region to cover an inscribed
+    ellipsoid.
+    """
+
+    # A state that should be contained in the inscribed ellipsoid
+    x_inner: np.ndarray
+    # when we search for the ellipsoid, we put a trust region constraint. This
+    # is the squared radius of that trust region.
+    ellipsoid_trust_region: float
+    # We enlarge the inner ellipsoid through a sequence of SDPs. This is the max
+    # number of iterations in that sequence.
+    find_inner_ellipsoid_max_iter: int
+
+    def __init__(
+        self,
+        x_inner: np.ndarray,
+        ellipsoid_trust_region: float = 100.0,
+        find_inner_ellipsoid_max_iter: int = 3,
+    ):
+        self.x_inner = x_inner
+        self.ellipsoid_trust_region = ellipsoid_trust_region
+        self.find_inner_ellipsoid_max_iter = find_inner_ellipsoid_max_iter
+
+
+@dataclass
 class CompatibleStatesOptions:
     """
     This option is used to encourage the compatible region to include certain
@@ -837,13 +864,11 @@ class CompatibleClfCbf:
         cbf_degrees: List[int],
         max_iter: int,
         *,
-        x_inner: np.ndarray,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
-        ellipsoid_trust_region: Optional[float] = 100,
+        inner_ellipsoid_options: Optional[InnerEllipsoidOptions] = None,
         binary_search_scale_options: Optional[BinarySearchOptions] = None,
-        find_inner_ellipsoid_max_iter: int = 3,
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
         backoff_scale: Optional[float] = None,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
@@ -860,16 +885,18 @@ class CompatibleClfCbf:
         - Expand the compatible region to cover some candidate states.
 
         Args:
-          x_inner: Each row of x_inner is a state that should be contained in
-            the compatible region.
           max_iter: The maximal number of bilinear alternation iterations.
           lagrangian_coefficient_tol: We remove the coefficients whose absolute
             value is smaller than this tolerance in the Lagrangian polynomials.
             Use None to preserve all coefficients.
-          ellipsoid_trust_region: when we search for the ellipsoid, we put a
-            trust region constraint. This is the squared radius of that trust
-            region.
         """
+
+        # One and only one of inner_ellipsoid_options and compatible_states_options is None.
+        assert (
+            inner_ellipsoid_options is not None and compatible_states_options is None
+        ) or (inner_ellipsoid_options is None and compatible_states_options is not None)
+        if inner_ellipsoid_options is not None:
+            assert binary_search_scale_options is not None
         assert isinstance(binary_search_scale_options, Optional[BinarySearchOptions])
         assert isinstance(compatible_states_options, Optional[CompatibleStatesOptions])
 
@@ -904,7 +931,7 @@ class CompatibleClfCbf:
             assert compatible_lagrangians is not None
             assert all(unsafe_lagrangians)
 
-            if find_inner_ellipsoid_max_iter > 0:
+            if inner_ellipsoid_options is not None:
                 # We use the heuristics to grow the inner ellipsoid.
                 assert compatible_states_options is None
                 # Search for the inner ellipsoid.
@@ -923,10 +950,11 @@ class CompatibleClfCbf:
                     cbf,
                     V_contain_ellipsoid_lagrangian_degree,
                     b_contain_ellipsoid_lagrangian_degree,
-                    x_inner,
+                    inner_ellipsoid_options.x_inner,
                     solver_id=solver_id,
-                    max_iter=find_inner_ellipsoid_max_iter,
-                    trust_region=ellipsoid_trust_region,
+                    solver_options=solver_options,
+                    max_iter=inner_ellipsoid_options.find_inner_ellipsoid_max_iter,
+                    trust_region=inner_ellipsoid_options.ellipsoid_trust_region,
                 )
 
                 assert binary_search_scale_options is not None
@@ -1144,6 +1172,7 @@ class CompatibleClfCbf:
         xi, lambda_mat = self._calc_xi_Lambda(
             V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b
         )
+        # This is just polynomial 1.
         poly_one = sym.Polynomial(sym.Monomial())
 
         poly = -poly_one
@@ -1155,7 +1184,6 @@ class CompatibleClfCbf:
         poly -= lagrangians.lambda_y.dot(lambda_y)
 
         # Compute s₁(x, y)(ξ(x)ᵀy+1)
-        # This is just polynomial 1.
         if self.use_y_squared:
             xi_y = xi.dot(self.y_squared_poly) + poly_one
         else:
@@ -1321,6 +1349,7 @@ class CompatibleClfCbf:
         max_iter: int = 10,
         convergence_tol: float = 1e-3,
         solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
         trust_region: Optional[float] = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
@@ -1401,6 +1430,7 @@ class CompatibleClfCbf:
             max_iter,
             convergence_tol,
             solver_id,
+            solver_options,
             trust_region,
         )
         return (S_sol, b_sol, c_sol)

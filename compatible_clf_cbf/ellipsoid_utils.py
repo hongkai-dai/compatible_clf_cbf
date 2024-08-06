@@ -120,6 +120,7 @@ def maximize_inner_ellipsoid_sequentially(
     max_iter: int = 10,
     convergence_tol: float = 1e-3,
     solver_id: Optional[solvers.SolverId] = None,
+    solver_options: Optional[solvers.SolverOptions] = None,
     trust_region: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
@@ -173,8 +174,10 @@ def maximize_inner_ellipsoid_sequentially(
             trust_region_constraint = _add_ellipsoid_trust_region(
                 prog, S, b, c, S_bar, b_bar, c_bar, trust_region
             )
-        result = utils.solve_with_id(prog, solver_id, solver_options=None)
-        assert result.is_success()
+        result = utils.solve_with_id(prog, solver_id, solver_options)
+        assert (
+            result.is_success()
+        ), f"Fails in iter={i} with {result.get_solution_result()}"
         S_result = result.GetSolution(S)
         b_result = result.GetSolution(b)
         c_result = result.GetSolution(c)
