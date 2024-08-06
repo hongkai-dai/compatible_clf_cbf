@@ -2,4 +2,4 @@
 max-line-length = 88
 exclude =
     venv
-extend-ignore = E203
+extend-ignore = E203, E741
