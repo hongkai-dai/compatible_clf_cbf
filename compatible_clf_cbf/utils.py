@@ -319,3 +319,61 @@ class BinarySearchOptions:
     def check(self):
         assert self.min <= self.max
         assert self.tol > 0
+
+
+def check_polynomial_pass_origin(p: sym.Polynomial) -> None:
+    """
+    assert p(0) = 0
+    """
+    assert sym.Monomial() not in p.monomial_to_coefficient_map().keys()
+
+
+def check_polynomials_pass_origin(p: np.ndarray) -> None:
+    """
+    assert p[i](0)=0 for all p[i] in p.
+    """
+    map(check_polynomial_pass_origin, p)
+
+
+def find_no_linear_term_variables(x_set: sym.Variables, p: np.ndarray) -> sym.Variables:
+    """
+    Find the subset of variables in `x_set`, such that these variables don't have
+    linear terms in any polynomial p[i].
+    """
+    no_linear_term_variables = sym.Variables([x_i for x_i in x_set])
+    for var in x_set:
+        found_monomial = False
+        for p_i in p:
+            if sym.Monomial(var) in p_i.monomial_to_coefficient_map().keys():
+                found_monomial = True
+        if found_monomial:
+            no_linear_term_variables.erase(var)
+    return no_linear_term_variables
+
+
+def new_free_polynomial_pass_origin(
+    prog: solvers.MathematicalProgram,
+    indeterminates: sym.Variables,
+    degree: int,
+    coeff_name: str,
+    no_linear_term_variables: sym.Variables,
+) -> sym.Polynomial:
+    """
+    Creates a new free polynomial passing the origin. Namely its constant term is
+    0. The new free polynomial doesn't have the linear term with variables in @p
+    no_linear_term_variables either.
+    """
+    m = sym.MonomialBasis(indeterminates, degree)
+    # Now remove the constant monomial, and linear monomials with variable in
+    # `no_linear_term_variables`.
+    m_prune = []
+    for m_i in m:
+        if m_i.total_degree() == 0:
+            continue
+        if m_i.total_degree() == 1 and m_i.GetVariables().IsSubsetOf(
+            no_linear_term_variables
+        ):
+            continue
+        m_prune.append(m_i)
+    coeffs = prog.NewContinuousVariables(len(m_prune), coeff_name)
+    return sym.Polynomial({m_prune[i]: coeffs[i] for i in range(len(m_prune))})

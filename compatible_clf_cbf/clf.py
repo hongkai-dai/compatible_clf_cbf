@@ -13,7 +13,10 @@ import pydrake.autodiffutils
 
 from compatible_clf_cbf.utils import (
     check_array_of_polynomials,
+    check_polynomials_pass_origin,
+    find_no_linear_term_variables,
     get_polynomial_result,
+    new_free_polynomial_pass_origin,
     new_sos_polynomial,
     solve_with_id,
 )
@@ -160,7 +163,7 @@ class ClfWInputLimitLagrangianDegrees:
     ) -> ClfWInputLimitLagrangian:
         V_minus_rho, _ = new_sos_polynomial(prog, x_set, self.V_minus_rho)
         Vdot = np.array(
-            [new_sos_polynomial(prog, x_set, degree) for degree in self.Vdot]
+            [new_sos_polynomial(prog, x_set, degree)[0] for degree in self.Vdot]
         )
         state_eq_constraints = (
             None
@@ -334,7 +337,7 @@ class ControlLyapunov:
             )
         else:
             assert isinstance(lagrangians, ClfWInputLimitLagrangian)
-            Vdot = dVdx_times_f + dVdx_times_g @ self.u_vertices
+            Vdot = (dVdx_times_f + dVdx_times_g @ self.u_vertices.T).reshape((-1,))
             sos_poly = (1 + lagrangians.V_minus_rho) * (V - rho) * sym.Polynomial(
                 self.x.dot(self.x)
             ) - lagrangians.Vdot.dot(Vdot + kappa * V)
@@ -469,3 +472,103 @@ class FindClfWoInputLimitsCounterExample:
         )
 
         self.prog.AddConstraint(constraint, constraint_lb, constraint_ub, x)
+
+
+def find_candidate_regional_lyapunov(
+    x: np.ndarray,
+    dynamics: np.ndarray,
+    V_degree: int,
+    positivity_eps: float,
+    d: int,
+    kappa: float,
+    state_eq_constraints: np.ndarray,
+    positivity_ceq_lagrangian_degrees: List[int],
+    derivative_ceq_lagrangian_degrees: List[int],
+    state_ineq_constraints: np.ndarray,
+    positivity_cin_lagrangian_degrees: List[int],
+    derivative_cin_lagrangian_degrees: List[int],
+) -> Tuple[solvers.MathematicalProgram, sym.Polynomial]:
+    """
+    Constructs a program to find Lyapunov candidate V for a closed-loop system,
+    that satisfy the following constraints within a region cin(x) <= 0
+
+    Find V(x), p1(x), p2(x), q1(1), q2(x)
+    s.t V - ε1*(xᵀx)ᵈ + p1(x) * cin(x) - p2(x) * ceq(x) is sos  (1)
+       -Vdot - κ * V + q1(x) * cin(x) - q2(x) * ceq(x) is sos  (2)
+       p1(x) is sos, q1(x) is sos.
+
+    Namely SOS can verify that on the semialgebraic set
+    {x | cin(x) <= 0, ceq(x) = 0}, we have V(x) >= 0 and Vdot <= -κ * V
+
+    Args:
+      dynamics: An array of polynomials of x. The closed-loop dynamics.
+      state_eq_constraints: An array of polynomials of x. The left hand side of
+      ceq(x) = 0
+      state_ineq_constraints: An array of polynomials of x. The left hand side
+      of cin(x) <= 0
+    """
+    # We assume that the goal state is x = 0.
+    check_polynomials_pass_origin(dynamics)
+    prog = solvers.MathematicalProgram()
+    prog.AddIndeterminates(x)
+    x_set = sym.Variables(x)
+    # We know that ceq(0) = 0 (because the goal state 0 should satisfy the
+    # equality constraint). Combining this with
+    # V - ε1*(xᵀx)ᵈ + p1(x) * cin(x) - p2(x) * ceq(x) is sos     (1)
+    # we know that the left hand side of (1) is 0 at the x=0. The left hand side
+    # is p1(0) * cin(0) at x=0.
+    # We know that cin(0) < 0 (assume that the goal state 0 is in the strict interior
+    # of the region). p1(x) is a sos, hence p1(0) = 0. A sos polynomial with
+    # constant term equal to 0 also means that all its linear terms should be 0.
+    # Hence p1(x) doesn't have a linear or constant terms. Hence the only linear
+    # term from the left hand side of (1) can come from V(x) and and ceq(x), and
+    # the linear terms have to cancel out.
+    no_linear_term_variables = find_no_linear_term_variables(
+        x_set, state_eq_constraints
+    )
+    V = new_free_polynomial_pass_origin(
+        prog, x_set, V_degree, "V", no_linear_term_variables
+    )
+    # Add the constraint V - ε1*(xᵀx)ᵈ + p1(x) * cin(x) - p2(x) * ceq(x) is sos
+    positivity_sos_condition = V
+    if positivity_eps > 0:
+        positivity_sos_condition -= positivity_eps * sym.Polynomial(
+            sym.pow(x.dot(x), d)
+        )
+    p1 = np.array(
+        [
+            prog.NewSosPolynomial(x_set, degree)[0]
+            for degree in positivity_cin_lagrangian_degrees
+        ]
+    )
+    positivity_sos_condition += p1.dot(state_ineq_constraints)
+    p2 = np.array(
+        [
+            prog.NewFreePolynomial(x_set, degree)
+            for degree in positivity_ceq_lagrangian_degrees
+        ]
+    )
+    positivity_sos_condition -= p2.dot(state_eq_constraints)
+    prog.AddSosConstraint(positivity_sos_condition)
+
+    # Impose the constraint -Vdot - κ * V + q1(x) * cin(x) - q2(x) * ceq(x) is sos
+    Vdot = V.Jacobian(x).dot(dynamics)
+    derivative_sos_condition = -Vdot - kappa * V
+    q1 = np.array(
+        [
+            prog.NewSosPolynomial(x_set, degree)[0]
+            for degree in derivative_cin_lagrangian_degrees
+        ]
+    )
+    derivative_sos_condition += q1.dot(state_ineq_constraints)
+    q2 = np.array(
+        [
+            prog.NewFreePolynomial(x_set, degree)
+            for degree in derivative_ceq_lagrangian_degrees
+        ]
+    )
+    derivative_sos_condition -= q2.dot(state_eq_constraints)
+    prog.AddSosConstraint(derivative_sos_condition)
+    return prog, V
+
+    pass
