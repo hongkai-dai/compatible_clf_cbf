@@ -158,3 +158,39 @@ def test_solve_w_id():
     )
     x_sol = result.GetSolution(x)
     np.testing.assert_allclose(x_sol[0] + x_sol[1], -1.9, atol=1e-5)
+
+
+def test_find_no_linear_term_variables():
+    x = sym.MakeVectorContinuousVariable(4, "x")
+    x_set = sym.Variables(x)
+    p = np.array(
+        [
+            sym.Polynomial(x[0] ** 2 + x[1] ** 2 + x[1] * x[3] + x[2] + 1),
+            sym.Polynomial(x[0] ** 3 - 2 * x[3]),
+        ]
+    )
+    no_linear_term_variables = mut.find_no_linear_term_variables(x_set, p)
+    assert no_linear_term_variables.size() == 2
+    assert no_linear_term_variables.include(x[0])
+    assert no_linear_term_variables.include(x[1])
+    assert x_set.size() == 4
+
+
+def test_new_free_polynomial_pass_origin():
+    prog = solvers.MathematicalProgram()
+    x = sym.MakeVectorContinuousVariable(3, "x")
+    x_set = sym.Variables(x)
+    degree = 2
+    coeff_name = "a"
+    no_linear_term_variables = sym.Variables(np.array([x[1], x[2]]))
+    p = mut.new_free_polynomial_pass_origin(
+        prog, x_set, degree, coeff_name, no_linear_term_variables
+    )
+    assert sym.Monomial(x[0], 2) in p.monomial_to_coefficient_map().keys()
+    assert sym.Monomial(x[1], 2) in p.monomial_to_coefficient_map().keys()
+    assert sym.Monomial(x[2], 2) in p.monomial_to_coefficient_map().keys()
+    assert sym.Monomial({x[0]: 1, x[1]: 1}) in p.monomial_to_coefficient_map().keys()
+    assert sym.Monomial({x[0]: 1, x[2]: 1}) in p.monomial_to_coefficient_map().keys()
+    assert sym.Monomial({x[1]: 1, x[2]: 1}) in p.monomial_to_coefficient_map().keys()
+    assert sym.Monomial(x[0]) in p.monomial_to_coefficient_map().keys()
+    assert len(p.monomial_to_coefficient_map().keys()) == 7

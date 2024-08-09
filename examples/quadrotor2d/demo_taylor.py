@@ -13,7 +13,6 @@ import pydrake.symbolic as sym
 import pydrake.systems.controllers
 
 from compatible_clf_cbf import clf_cbf
-from compatible_clf_cbf import clf
 import compatible_clf_cbf.utils
 from examples.quadrotor2d.plant import Quadrotor2dPlant
 
@@ -55,33 +54,6 @@ def search_clf_cbf(
     b_init = np.array([1 - V_init])
     kappa_V = 1e-3
     kappa_b = np.array([kappa_V])
-
-    search_clf = False
-    if search_clf:
-        clf_search = clf.ControlLyapunov(
-            f=f,
-            g=g,
-            x=x,
-            x_equilibrium=np.zeros((6,)),
-            u_vertices=None,
-            state_eq_constraints=None,
-        )
-        clf_lagrangian_degrees = clf.ClfWoInputLimitLagrangianDegrees(
-            dVdx_times_f=4,
-            dVdx_times_g=[2, 2],
-            rho_minus_V=4,
-            state_eq_constraints=None,
-        )
-        solver_options = solvers.SolverOptions()
-        solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
-        clf_search.search_lagrangian_given_clf(
-            V_init,
-            rho=1,
-            kappa=kappa_V,
-            lagrangian_degrees=clf_lagrangian_degrees,
-            solver_options=solver_options,
-        )
-        return
 
     # Ground as the unsafe region.
     unsafe_regions = [np.array([sym.Polynomial(x[1] + 0.5)])]
@@ -172,7 +144,7 @@ def search_clf_cbf(
         compatible_states_options=compatible_states_options,
         backoff_scale=0.02,
     )
-    return
+    return V, b
 
 
 def main():
