@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+import os
+import os.path
+import pickle
 from typing import List, Optional, Tuple
 from typing_extensions import Self
 
@@ -15,6 +18,7 @@ from compatible_clf_cbf.utils import (
     new_sos_polynomial,
     solve_with_id,
 )
+import compatible_clf_cbf.utils
 import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
 
 
@@ -1545,3 +1549,57 @@ class CompatibleClfCbf:
             )
             for b_i in b
         ]
+
+
+def save_clf_cbf(
+    V: Optional[sym.Polynomial],
+    b: np.ndarray,
+    x_set: sym.Variables,
+    kappa_V: Optional[float],
+    kappa_b: np.ndarray,
+    pickle_path: str,
+):
+    """ """
+    _, file_extension = os.path.splitext(pickle_path)
+    assert file_extension in (".pkl", ".pickle"), f"File extension is {file_extension}"
+    data = {}
+    if V is not None:
+        data["V"] = compatible_clf_cbf.utils.serialize_polynomial(V, x_set)
+    data["b"] = [compatible_clf_cbf.utils.serialize_polynomial(b_i, x_set) for b_i in b]
+    if kappa_V is not None:
+        data["kappa_V"] = kappa_V
+    data["kappa_b"] = kappa_b
+
+    if os.path.exists(pickle_path):
+        overwrite_cmd = input(
+            f"File {pickle_path} already exists. Overwrite the file? Press [Y/n]:"
+        )
+        if overwrite_cmd in ("Y", "y"):
+            save_cmd = True
+        else:
+            save_cmd = False
+    else:
+        save_cmd = True
+
+    if save_cmd:
+        with open(pickle_path, "wb") as handle:
+            pickle.dump(data, handle)
+
+
+def load_clf_cbf(pickle_path: str, x_set: sym.Variables) -> dict:
+    ret = {}
+    with open(pickle_path, "rb") as handle:
+        data = pickle.load(handle)
+
+    if "V" in data.keys():
+        ret["V"] = compatible_clf_cbf.utils.deserialize_polynomial(data["V"], x_set)
+    ret["b"] = np.array(
+        [
+            compatible_clf_cbf.utils.deserialize_polynomial(b_i, x_set)
+            for b_i in data["b"]
+        ]
+    )
+    if "kappa_V" in data.keys():
+        ret["kappa_V"] = data["kappa_V"]
+    ret["kappa_b"] = data["kappa_b"]
+    return ret

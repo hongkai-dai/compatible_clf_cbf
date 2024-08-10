@@ -5,6 +5,8 @@ the state), and equality constraint to enforce the unit-length constraint on the
 cos/sin.
 """
 
+import os
+
 import numpy as np
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
@@ -100,13 +102,42 @@ def main(use_y_squared: bool, with_u_bound: bool):
         x_equilibrium,
         V_degree,
         b_degrees,
-        max_iter=5,
+        max_iter=0,
         solver_options=solver_options,
         # solver_id = solvers.ClarabelSolver().id(),
         lagrangian_coefficient_tol=None,
         compatible_states_options=compatible_states_options,
         backoff_scale=0.02,
     )
+    x_set = sym.Variables(x)
+    pickle_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "../../data/quadrotor2d_clf_cbf.pkl",
+    )
+    clf_cbf.save_clf_cbf(
+        V,
+        b,
+        x_set,
+        kappa_V,
+        kappa_b,
+        pickle_path,
+    )
+
+    # Check the CLF/CBF with a positive kappa.
+    compatible_lagrangians, unsafe_regions_lagrangians = (
+        compatible.search_lagrangians_given_clf_cbf(
+            V,
+            b,
+            kappa_V=1e-4,
+            kappa_b=np.array([1e-4]),
+            barrier_eps=barrier_eps,
+            compatible_lagrangian_degrees=compatible_lagrangian_degrees,
+            unsafe_regions_lagrangian_degrees=unsafe_regions_lagrangian_degrees,
+            solver_options=solver_options,
+        )
+    )
+    assert compatible_lagrangians is not None
+    assert unsafe_regions_lagrangians is not None
 
 
 if __name__ == "__main__":
