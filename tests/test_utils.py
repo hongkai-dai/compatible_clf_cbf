@@ -194,3 +194,40 @@ def test_new_free_polynomial_pass_origin():
     assert sym.Monomial({x[1]: 1, x[2]: 1}) in p.monomial_to_coefficient_map().keys()
     assert sym.Monomial(x[0]) in p.monomial_to_coefficient_map().keys()
     assert len(p.monomial_to_coefficient_map().keys()) == 7
+
+
+def test_serialize_polynomial():
+
+    def test(p, x_set, expected):
+        ret = mut.serialize_polynomial(p, x_set)
+        assert len(ret) == len(expected)
+        for m, c in ret.items():
+            assert m in expected.keys()
+            assert c == expected[m]
+
+    x = sym.MakeVectorContinuousVariable(3, "x")
+    x_set = sym.Variables(x)
+    test(sym.Polynomial(3 * x[0] ** 2), None, {(2,): 3})
+    test(sym.Polynomial(3 * x[0] ** 2), x_set, {(2, 0, 0): 3})
+    test(
+        sym.Polynomial(3 * x[0] ** 2 + 2 * x[1] * x[2]),
+        x_set,
+        {(2, 0, 0): 3, (0, 1, 1): 2},
+    )
+
+
+def test_deserialize_polynomial():
+    def test(monomial_degrees_to_coefficient, x, p_expected):
+        p = mut.deserialize_polynomial(monomial_degrees_to_coefficient, x)
+        assert p.EqualTo(p_expected)
+        p_again = mut.deserialize_polynomial(mut.serialize_polynomial(p, x), x)
+        assert p_again.EqualTo(p_expected)
+
+    x = sym.MakeVectorContinuousVariable(3, "x")
+    x_set = sym.Variables(x)
+    test({(2, 0, 1): 4}, x_set, sym.Polynomial(4 * x[0] ** 2 * x[2]))
+    test(
+        {(2, 0, 1): 4, (0, 2, 3): -1},
+        x_set,
+        sym.Polynomial(4 * x[0] ** 2 * x[2] - x[1] ** 2 * x[2] ** 3),
+    )

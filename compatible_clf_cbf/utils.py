@@ -1,5 +1,5 @@
 import dataclasses
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 from typing_extensions import Self
 import numpy as np
 
@@ -377,3 +377,33 @@ def new_free_polynomial_pass_origin(
         m_prune.append(m_i)
     coeffs = prog.NewContinuousVariables(len(m_prune), coeff_name)
     return sym.Polynomial({m_prune[i]: coeffs[i] for i in range(len(m_prune))})
+
+
+def serialize_polynomial(
+    p: sym.Polynomial, x: Optional[sym.Variables]
+) -> Dict[Tuple[int, ...], float]:
+    """
+    For a polynomial (whose coefficients are all double), store the mapping
+    (monomial_degrees : coefficient), where monomial_degrees is a tuple recording
+    the degree for each variable.
+    """
+    x = p.indeterminates() if x is None else x
+    ret = {}
+    # A dummy environment to evaluate the coefficient.
+    env = {}
+    for m, c in p.monomial_to_coefficient_map().items():
+        degrees = tuple([m.degree(var) for var in x])
+        ret[degrees] = c.Evaluate(env)
+    return ret
+
+
+def deserialize_polynomial(
+    monomial_degrees_to_coefficient: Dict[Tuple[int, ...], float], x: sym.Variables
+) -> sym.Polynomial:
+    monomial_to_coefficient_map = {
+        sym.Monomial(
+            {var: degree for (var, degree) in zip(x, monomial_degrees)}
+        ): sym.Expression(coeff)
+        for (monomial_degrees, coeff) in monomial_degrees_to_coefficient.items()
+    }
+    return sym.Polynomial(monomial_to_coefficient_map)
