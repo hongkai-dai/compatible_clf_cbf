@@ -121,7 +121,7 @@ def test_solve_w_id():
     prog.AddBoundingBoxConstraint(-1, 1, x)
     prog.AddLinearCost(x[0] + x[1] + 1)
     result = mut.solve_with_id(
-        prog, solver_id=None, solver_options=None, backoff_scale=0.1
+        prog, solver_id=None, solver_options=None, backoff_rel_scale=0.1
     )
     assert result.is_success()
     # I know the optimal solution is obtained at (-1, -1), with the optimal cost being
@@ -132,7 +132,7 @@ def test_solve_w_id():
     # x[0] + x[1] = -1.9
     prog.AddLinearCost(-x[0] - x[1])
     result = mut.solve_with_id(
-        prog, solver_id=None, solver_options=None, backoff_scale=None
+        prog, solver_id=None, solver_options=None, backoff_rel_scale=None
     )
     x_sol = result.GetSolution(x)
     np.testing.assert_allclose(x_sol[0] + x_sol[1], -1.9, atol=1e-5)
@@ -143,7 +143,7 @@ def test_solve_w_id():
     prog.AddBoundingBoxConstraint(-1, 1, x)
     prog.AddLinearCost(x[0] + x[1] + 3)
     result = mut.solve_with_id(
-        prog, solver_id=None, solver_options=None, backoff_scale=0.1
+        prog, solver_id=None, solver_options=None, backoff_rel_scale=0.1
     )
     assert result.is_success()
     # I know the optimal solution is obtained at (-1, -1), with the optimal cost being
@@ -154,7 +154,7 @@ def test_solve_w_id():
     # x[0] + x[1] = -1.9
     prog.AddLinearCost(-x[0] - x[1])
     result = mut.solve_with_id(
-        prog, solver_id=None, solver_options=None, backoff_scale=None
+        prog, solver_id=None, solver_options=None, backoff_rel_scale=None
     )
     x_sol = result.GetSolution(x)
     np.testing.assert_allclose(x_sol[0] + x_sol[1], -1.9, atol=1e-5)

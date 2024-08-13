@@ -3,6 +3,8 @@ Certify and search Control Lyapunov function (CLF) through sum-of-squares optimi
 """
 
 from dataclasses import dataclass
+import os
+import pickle
 from typing import List, Optional, Tuple, Union
 from typing_extensions import Self
 
@@ -20,6 +22,7 @@ from compatible_clf_cbf.utils import (
     new_sos_polynomial,
     solve_with_id,
 )
+import compatible_clf_cbf.utils
 
 
 @dataclass
@@ -571,4 +574,38 @@ def find_candidate_regional_lyapunov(
     prog.AddSosConstraint(derivative_sos_condition)
     return prog, V
 
-    pass
+
+def save_clf(V: sym.Polynomial, x_set: sym.Variables, kappa: float, pickle_path: str):
+    """
+    Save the CLF to a pickle file.
+    """
+    _, file_extension = os.path.splitext(pickle_path)
+    assert file_extension in (".pkl", ".pickle"), f"File extension is {file_extension}"
+    data = {}
+    data["V"] = compatible_clf_cbf.utils.serialize_polynomial(V, x_set)
+    data["kappa"] = kappa
+
+    if os.path.exists(pickle_path):
+        overwrite_cmd = input(
+            f"File {pickle_path} already exists. Overwrite the file? Press [Y/n]:"
+        )
+        if overwrite_cmd in ("Y", "y"):
+            save_cmd = True
+        else:
+            save_cmd = False
+    else:
+        save_cmd = True
+
+    if save_cmd:
+        with open(pickle_path, "wb") as handle:
+            pickle.dump(data, handle)
+
+
+def load_clf(pickle_path: str, x_set: sym.Variables) -> dict:
+    ret = {}
+    with open(pickle_path, "rb") as handle:
+        data = pickle.load(handle)
+
+    ret["V"] = compatible_clf_cbf.utils.deserialize_polynomial(data["V"], x_set)
+    ret["kappa"] = data["kappa"]
+    return ret

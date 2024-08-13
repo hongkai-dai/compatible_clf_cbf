@@ -688,7 +688,8 @@ class CompatibleClfCbf:
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
-        backoff_scale: Optional[float] = None,
+        backoff_rel_scale: Optional[float] = None,
+        backoff_abs_scale: Optional[float] = None,
     ) -> Tuple[
         Optional[sym.Polynomial],
         Optional[np.ndarray],
@@ -721,7 +722,9 @@ class CompatibleClfCbf:
         elif compatible_states_options is not None:
             self._add_compatible_states_options(prog, V, b, compatible_states_options)
 
-        result = solve_with_id(prog, solver_id, solver_options, backoff_scale)
+        result = solve_with_id(
+            prog, solver_id, solver_options, backoff_rel_scale, backoff_abs_scale
+        )
         if result.is_success():
             V_sol = None if V is None else result.GetSolution(V)
             b_sol = np.array([result.GetSolution(b_i) for b_i in b])
@@ -874,7 +877,7 @@ class CompatibleClfCbf:
         inner_ellipsoid_options: Optional[InnerEllipsoidOptions] = None,
         binary_search_scale_options: Optional[BinarySearchOptions] = None,
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
-        backoff_scale: Optional[float] = None,
+        backoff_scales: Optional[List[compatible_clf_cbf.utils.BackoffScale]] = None,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
         """
         Synthesize the compatible CLF and CBF through bilinear alternation. We
@@ -915,8 +918,26 @@ class CompatibleClfCbf:
             self.unsafe_regions
         )
 
+        def evaluate_compatible_states(clf_fun, cbf_funs, x_val):
+            if clf_fun is not None:
+                V_candidates = clf_fun.EvaluateIndeterminates(self.x, x_val.T)
+                print(f"V(candidate_compatible_states)={V_candidates}")
+            b_candidates = [
+                b_i.EvaluateIndeterminates(
+                    self.x,
+                    x_val.T,
+                )
+                for b_i in cbf_funs
+            ]
+            for i, b_candidates_val in enumerate(b_candidates):
+                print(f"b[{i}](candidate_compatible_states)={b_candidates_val}")
+
         for iteration in range(max_iter):
             print(f"iteration {iteration}")
+            if compatible_states_options is not None:
+                evaluate_compatible_states(
+                    clf, cbf, compatible_states_options.candidate_compatible_states
+                )
             # Search for the Lagrangians.
             (
                 compatible_lagrangians,
@@ -996,23 +1017,22 @@ class CompatibleClfCbf:
                     compatible_states_options=compatible_states_options,
                     solver_id=solver_id,
                     solver_options=solver_options,
-                    backoff_scale=backoff_scale,
+                    backoff_rel_scale=(
+                        None
+                        if backoff_scales is None
+                        else backoff_scales[iteration].rel
+                    ),
+                    backoff_abs_scale=(
+                        None
+                        if backoff_scales is None
+                        else backoff_scales[iteration].abs
+                    ),
                 )
                 assert cbf is not None
-                if clf is not None:
-                    V_candidates = clf.EvaluateIndeterminates(
-                        self.x, compatible_states_options.candidate_compatible_states.T
-                    )
-                    b_candidates = [
-                        b_i.EvaluateIndeterminates(
-                            self.x,
-                            compatible_states_options.candidate_compatible_states.T,
-                        )
-                        for b_i in cbf
-                    ]
-                    print(f"V(candidate_compatible_states)={V_candidates}")
-                    for i, b_candidates_val in enumerate(b_candidates):
-                        print(f"b[{i}](candidate_compatible_states)={b_candidates_val}")
+        if compatible_states_options is not None:
+            evaluate_compatible_states(
+                clf, cbf, compatible_states_options.candidate_compatible_states
+            )
         return clf, cbf
 
     def check_compatible_at_state(
@@ -1559,7 +1579,9 @@ def save_clf_cbf(
     kappa_b: np.ndarray,
     pickle_path: str,
 ):
-    """ """
+    """
+    Save the CLF and CBF to a pickle file.
+    """
     _, file_extension = os.path.splitext(pickle_path)
     assert file_extension in (".pkl", ".pickle"), f"File extension is {file_extension}"
     data = {}
