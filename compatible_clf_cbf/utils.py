@@ -226,51 +226,76 @@ def to_lower_triangular_columns(mat: np.ndarray) -> np.ndarray:
     return ret
 
 
+@dataclasses.dataclass
+class BackoffScale:
+    rel: Optional[float]
+    abs: Optional[float]
+
+
 def solve_with_id(
     prog: solvers.MathematicalProgram,
     solver_id: Optional[solvers.SolverId] = None,
     solver_options: Optional[solvers.SolverOptions] = None,
-    backoff_scale: Optional[float] = None,
+    backoff_rel_scale: Optional[float] = None,
+    backoff_abs_scale: Optional[float] = None,
 ) -> solvers.MathematicalProgramResult:
     """
     Args:
-      backoff_scale: when solving an optimization problem with an objective function,
-      we first solve the problem to optimality, and then "back off" a little bit to find
-      a sub-optimal but strictly feasible solution. backoff_scale=0 corresponds to no
-      backoff. Note that during backing off, we will modify the original `prog`.
+      backoff_rel_scale: when solving an optimization problem with an objective
+      function, we first solve the problem to optimality, and then "back off" a
+      little bit to find a sub-optimal but strictly feasible solution.
+      backoff_rel_scale=0 corresponds to no backoff. Note that during backing
+      off, we will modify the original `prog`.
+      backoff_abs_scale: The absolute scale to back off.
     """
     if solver_id is None:
         result = solvers.Solve(prog, None, solver_options)
     else:
         solver = solvers.MakeSolver(solver_id)
         result = solver.Solve(prog, None, solver_options)
-    if (
-        len(prog.linear_costs()) > 0 or len(prog.quadratic_costs()) > 0
-    ) and backoff_scale is not None:
+    if (len(prog.linear_costs()) > 0 or len(prog.quadratic_costs()) > 0) and (
+        backoff_rel_scale is not None or backoff_abs_scale is not None
+    ):
         assert (
             len(prog.linear_costs()) == 1
         ), "TODO(hongkai.dai): support program with multiple LinearCost objects."
         assert (
             len(prog.quadratic_costs()) == 0
         ), "TODO(hongkai.dai): we currently only support program with linear costs."
-        assert backoff_scale >= 0, "backoff_scale should be non-negative."
+        if backoff_rel_scale is not None:
+            assert backoff_rel_scale >= 0, "backoff_rel_scale should be non-negative."
+        if backoff_abs_scale is not None:
+            assert backoff_abs_scale >= 0, "backoff_abs_scale should be non-negative."
+        # Cannot handle both backoff_rel_scale and backoff_abs_scale
+        assert (
+            backoff_rel_scale is None or backoff_abs_scale is None
+        ), "backoff_rel_scale and backoff_abs_scale cannot both be set."
+
         optimal_cost = result.get_optimal_cost()
         coeff_cost = prog.linear_costs()[0].evaluator().a()
         var_cost = prog.linear_costs()[0].variables()
         constant_cost = prog.linear_costs()[0].evaluator().b()
-        prog.RemoveCost(prog.linear_costs()[0])
-        cost_upper_bound = (
-            optimal_cost * (1 + backoff_scale)
-            if optimal_cost > 0
-            else optimal_cost * (1 - backoff_scale)
-        )
-        prog.AddLinearConstraint(
-            coeff_cost, -np.inf, cost_upper_bound - constant_cost, var_cost
-        )
-        if solver_id is None:
-            result = solvers.Solve(prog, None, solver_options)
+        if backoff_rel_scale is not None:
+            cost_upper_bound = (
+                optimal_cost * (1 + backoff_rel_scale)
+                if optimal_cost > 0
+                else optimal_cost * (1 - backoff_rel_scale)
+            )
+        elif backoff_abs_scale is not None:
+            cost_upper_bound = optimal_cost + backoff_abs_scale
         else:
-            result = solver.Solve(prog, None, solver_options)
+            assert Exception("backoff_rel_scale or backoff_abs_scale should be set.")
+        if (backoff_rel_scale is not None and backoff_rel_scale > 0) or (
+            backoff_abs_scale is not None and backoff_abs_scale
+        ) > 0:
+            prog.RemoveCost(prog.linear_costs()[0])
+            prog.AddLinearConstraint(
+                coeff_cost, -np.inf, cost_upper_bound - constant_cost, var_cost
+            )
+            if solver_id is None:
+                result = solvers.Solve(prog, None, solver_options)
+            else:
+                result = solver.Solve(prog, None, solver_options)
     return result
 
 

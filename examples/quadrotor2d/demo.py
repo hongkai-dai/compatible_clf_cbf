@@ -14,6 +14,7 @@ import pydrake.symbolic as sym
 from compatible_clf_cbf import clf_cbf
 from examples.quadrotor2d.plant import Quadrotor2dTrigPlant
 import examples.quadrotor2d.demo_clf as demo_clf
+import compatible_clf_cbf.utils
 
 
 def main(use_y_squared: bool, with_u_bound: bool):
@@ -54,14 +55,17 @@ def main(use_y_squared: bool, with_u_bound: bool):
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[
-            clf_cbf.CompatibleLagrangianDegrees.Degree(x=1, y=1) for _ in range(2)
+            clf_cbf.CompatibleLagrangianDegrees.Degree(x=1, y=0 if use_y_squared else 1)
+            for _ in range(2)
         ],
-        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=1),
+        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(
+            x=2, y=0 if use_y_squared else 1
+        ),
         y=(
             None
             if use_y_squared
             else [
-                clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=1)
+                clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=0)
                 for _ in range(compatible.y.size)
             ]
         ),
@@ -91,6 +95,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         weight_b=np.array([1]),
     )
 
+    max_iter = 5
     V, b = compatible.bilinear_alternation(
         V_init,
         b_init,
@@ -102,12 +107,15 @@ def main(use_y_squared: bool, with_u_bound: bool):
         x_equilibrium,
         V_degree,
         b_degrees,
-        max_iter=0,
+        max_iter=max_iter,
         solver_options=solver_options,
         # solver_id = solvers.ClarabelSolver().id(),
         lagrangian_coefficient_tol=None,
         compatible_states_options=compatible_states_options,
-        backoff_scale=0.02,
+        backoff_scales=[
+            compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None)
+            for _ in range(max_iter)
+        ],
     )
     x_set = sym.Variables(x)
     pickle_path = os.path.join(
