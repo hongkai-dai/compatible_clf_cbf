@@ -134,6 +134,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         lagrangian_coefficient_tol=None,
         compatible_states_options=compatible_states_options,
         backoff_scales=backoff_scales,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
     )
     pickle_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "../../data/quadrotor_clf_cbf.pkl"

@@ -114,6 +114,7 @@ class CompatibleLagrangianDegrees:
             x: sym.Variables,
             y: sym.Variables,
             is_sos: bool,
+            sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         ) -> sym.Polynomial:
             """
             Args:
@@ -123,7 +124,7 @@ class CompatibleLagrangianDegrees:
                 basis = sym.MonomialBasis(
                     {x: int(np.floor(self.x / 2)), y: int(np.floor(self.y / 2))}
                 )
-                poly, _ = prog.NewSosPolynomial(basis)
+                poly, _ = prog.NewSosPolynomial(basis, type=sos_type)
             else:
                 basis = sym.MonomialBasis({x: self.x, y: self.y})
                 coeffs = prog.NewContinuousVariables(basis.size)
@@ -138,7 +139,12 @@ class CompatibleLagrangianDegrees:
     state_eq_constraints: Optional[List[Degree]]
 
     def to_lagrangians(
-        self, prog: solvers.MathematicalProgram, x: sym.Variables, y: sym.Variables
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: sym.Variables,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> CompatibleLagrangians:
         lambda_y = np.array(
             [
@@ -151,20 +157,27 @@ class CompatibleLagrangianDegrees:
             None
             if self.y is None
             else np.array(
-                [y_i.construct_polynomial(prog, x, y, is_sos=True) for y_i in self.y]
+                [
+                    y_i.construct_polynomial(prog, x, y, is_sos=True, sos_type=sos_type)
+                    for y_i in self.y
+                ]
             )
         )
         rho_minus_V = (
             None
             if self.rho_minus_V is None
-            else self.rho_minus_V.construct_polynomial(prog, x, y, is_sos=True)
+            else self.rho_minus_V.construct_polynomial(
+                prog, x, y, is_sos=True, sos_type=sos_type
+            )
         )
         b_plus_eps = (
             None
             if self.b_plus_eps is None
             else np.array(
                 [
-                    b_plus_eps_i.construct_polynomial(prog, x, y, is_sos=True)
+                    b_plus_eps_i.construct_polynomial(
+                        prog, x, y, is_sos=True, sos_type=sos_type
+                    )
                     for b_plus_eps_i in self.b_plus_eps
                 ]
             )
@@ -594,6 +607,8 @@ class CompatibleClfCbf:
         lagrangian_degrees: CompatibleLagrangianDegrees,
         barrier_eps: Optional[np.ndarray],
         local_clf: bool = True,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[solvers.MathematicalProgram, CompatibleLagrangians]:
         """
         Given CLF candidate V and CBF candidate b, construct the optimization
@@ -617,7 +632,9 @@ class CompatibleClfCbf:
         """
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.xy_set)
-        lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set, self.y_set)
+        lagrangians = lagrangian_degrees.to_lagrangians(
+            prog, self.x_set, self.y_set, sos_type=lagrangian_sos_type
+        )
         self._add_compatibility(
             prog=prog,
             V=V,
@@ -627,6 +644,7 @@ class CompatibleClfCbf:
             lagrangians=lagrangians,
             barrier_eps=barrier_eps,
             local_clf=local_clf,
+            sos_type=compatible_sos_type,
         )
         return (prog, lagrangians)
 
@@ -642,6 +660,8 @@ class CompatibleClfCbf:
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[
         Optional[CompatibleLagrangians], List[Optional[UnsafeRegionLagrangians]]
     ]:
@@ -649,7 +669,15 @@ class CompatibleClfCbf:
             prog_compatible,
             compatible_lagrangians,
         ) = self.construct_search_compatible_lagrangians(
-            V, b, kappa_V, kappa_b, compatible_lagrangian_degrees, barrier_eps
+            V,
+            b,
+            kappa_V,
+            kappa_b,
+            compatible_lagrangian_degrees,
+            barrier_eps,
+            local_clf=True,
+            lagrangian_sos_type=lagrangian_sos_type,
+            compatible_sos_type=compatible_sos_type,
         )
         result_compatible = solve_with_id(prog_compatible, solver_id, solver_options)
         compatible_lagrangians_result = (
@@ -690,6 +718,7 @@ class CompatibleClfCbf:
         solver_options: Optional[solvers.SolverOptions] = None,
         backoff_rel_scale: Optional[float] = None,
         backoff_abs_scale: Optional[float] = None,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[
         Optional[sym.Polynomial],
         Optional[np.ndarray],
@@ -713,6 +742,7 @@ class CompatibleClfCbf:
             kappa_V,
             kappa_b,
             barrier_eps,
+            compatible_sos_type=compatible_sos_type,
         )
 
         if ellipsoid_inner is not None:
@@ -878,6 +908,8 @@ class CompatibleClfCbf:
         binary_search_scale_options: Optional[BinarySearchOptions] = None,
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
         backoff_scales: Optional[List[compatible_clf_cbf.utils.BackoffScale]] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
         """
         Synthesize the compatible CLF and CBF through bilinear alternation. We
@@ -953,6 +985,8 @@ class CompatibleClfCbf:
                 solver_id,
                 solver_options,
                 lagrangian_coefficient_tol,
+                lagrangian_sos_type=lagrangian_sos_type,
+                compatible_sos_type=compatible_sos_type,
             )
             assert compatible_lagrangians is not None
             assert all(unsafe_lagrangians)
@@ -1027,6 +1061,7 @@ class CompatibleClfCbf:
                         if backoff_scales is None
                         else backoff_scales[iteration].abs
                     ),
+                    compatible_sos_type=compatible_sos_type,
                 )
                 assert cbf is not None
         if compatible_states_options is not None:
@@ -1163,6 +1198,7 @@ class CompatibleClfCbf:
         lagrangians: CompatibleLagrangians,
         barrier_eps: Optional[np.ndarray],
         local_clf: bool,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> sym.Polynomial:
         """
         Add the p-satz condition that certifies the following set is empty
@@ -1236,7 +1272,7 @@ class CompatibleClfCbf:
             assert lagrangians.state_eq_constraints is not None
             poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
 
-        prog.AddSosConstraint(poly)
+        prog.AddSosConstraint(poly, sos_type)
         return poly
 
     def _add_barrier_safe_constraint(
@@ -1293,6 +1329,7 @@ class CompatibleClfCbf:
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
         local_clf: bool = True,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[
         solvers.MathematicalProgram,
         Optional[sym.Polynomial],
@@ -1360,6 +1397,7 @@ class CompatibleClfCbf:
             lagrangians=compatible_lagrangians,
             barrier_eps=barrier_eps,
             local_clf=local_clf,
+            sos_type=compatible_sos_type,
         )
 
         return (prog, V, b)
