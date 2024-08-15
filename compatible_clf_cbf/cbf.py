@@ -374,12 +374,12 @@ class ControlBarrier:
             assert isinstance(lagrangians, CbfWoInputLimitLagrangian)
             sos_poly = (
                 (1 + lagrangians.dbdx_times_f) * (dbdx_times_f + kappa * b)
-                - lagrangians.dbdx_times_g.dot(dbdx_times_g.squeeze())
+                - lagrangians.dbdx_times_g.dot(dbdx_times_g.reshape((-1,)))
                 - lagrangians.b_plus_eps * (b + eps)
             )
         else:
             assert isinstance(lagrangians, CbfWInputLimitLagrangian)
-            bdot = dbdx_times_f + dbdx_times_g @ self.u_vertices
+            bdot = (dbdx_times_f + dbdx_times_g @ self.u_vertices.T).reshape((-1,))
             sos_poly = -(1 + lagrangians.b_plus_eps) * (b + eps) + lagrangians.bdot.dot(
                 bdot + kappa * b
             )
@@ -388,3 +388,32 @@ class ControlBarrier:
             sos_poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
         prog.AddSosConstraint(sos_poly)
         return sos_poly
+
+
+class CbfConstraint:
+    """
+    Add the linear constraint dbdx * f(x) + dbdx * g(x)*u >= -kappa * b(x) on u.
+    """
+
+    def __init__(
+        self,
+        b: sym.Polynomial,
+        f: np.ndarray,
+        g: np.ndarray,
+        x: np.ndarray,
+        kappa: float,
+    ):
+        dbdx = b.Jacobian(x)
+        dbdx_times_f = dbdx.dot(f)
+        dbdx_times_g = dbdx @ g
+        self.rhs = -kappa * b - dbdx_times_f
+        self.lhs_coeff = dbdx_times_g
+        self.x = x
+
+    def add_to_prog(
+        self, prog: solvers.MathematicalProgram, x_val: np.ndarray, u: np.ndarray
+    ):
+        env = {self.x[i]: x_val[i] for i in range(x_val.size)}
+        lhs_coeff = np.array([p.Evaluate(env) for p in self.lhs_coeff])
+        rhs = self.rhs.Evaluate(env)
+        prog.AddLinearConstraint(lhs_coeff, rhs, np.inf, u)

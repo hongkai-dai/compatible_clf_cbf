@@ -64,8 +64,20 @@ def main(use_y_squared: bool, with_u_bound: bool):
         )
 
     b_init = np.array([1 - V_init])
-    kappa_V = 0
-    kappa_b = np.array([kappa_V])
+
+    load_clf_cbf = True
+    if load_clf_cbf:
+        data = clf_cbf.load_clf_cbf(
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "../../data/quadrotor_clf_cbf3.pkl",
+            ),
+            x_set,
+        )
+        V_init = data["V"]
+        b_init = data["b"]
+    kappa_V_sequences = [0, 1e-3, 1e-3, 1e-3, 1e-3]
+    kappa_b_sequences = [np.array([kappa_V]) for kappa_V in kappa_V_sequences]
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[
@@ -94,65 +106,122 @@ def main(use_y_squared: bool, with_u_bound: bool):
     ]
     barrier_eps = np.array([0.000])
     x_equilibrium = np.zeros((13,))
-    candidate_compatible_states = np.zeros((6, 13))
-    candidate_compatible_states[1, 6] = -0.3
-    candidate_compatible_states[2, 5] = -0.3
-    candidate_compatible_states[2, 6] = -0.3
-    candidate_compatible_states[3, 5] = 0.3
-    candidate_compatible_states[3, 6] = -0.3
-    candidate_compatible_states[4, 4] = 0.3
-    candidate_compatible_states[4, 6] = -0.3
-    candidate_compatible_states[5, 4] = -0.3
-    candidate_compatible_states[5, 6] = -0.3
-    compatible_states_options = clf_cbf.CompatibleStatesOptions(
-        candidate_compatible_states=candidate_compatible_states,
-        anchor_states=np.zeros((1, 13)),
-        b_anchor_bounds=[(np.array([0.0]), np.array([1.0]))],
-        weight_V=1,
-        weight_b=np.array([1]),
-    )
+    candidate_compatible_states_sequences = []
+    candidate_compatible_states_sequences.append(np.zeros((6, 13)))
+    candidate_compatible_states_sequences[0][1, 6] = -0.3
+    candidate_compatible_states_sequences[0][2, 5] = -0.3
+    candidate_compatible_states_sequences[0][2, 6] = -0.3
+    candidate_compatible_states_sequences[0][3, 5] = 0.3
+    candidate_compatible_states_sequences[0][3, 6] = -0.3
+    candidate_compatible_states_sequences[0][4, 4] = 0.3
+    candidate_compatible_states_sequences[0][4, 6] = -0.3
+    candidate_compatible_states_sequences[0][5, 4] = -0.3
+    candidate_compatible_states_sequences[0][5, 6] = -0.3
+
+    candidate_compatible_states_sequences.append(np.zeros((6, 13)))
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = -0.4
+    candidate_compatible_states_sequences[-1][2, 6] = -0.3
+    candidate_compatible_states_sequences[-1][3, 5] = 0.4
+    candidate_compatible_states_sequences[-1][3, 6] = -0.3
+    candidate_compatible_states_sequences[-1][4, 4] = 0.3
+    candidate_compatible_states_sequences[-1][4, 6] = -0.4
+    candidate_compatible_states_sequences[-1][5, 4] = -0.3
+    candidate_compatible_states_sequences[-1][5, 6] = -0.4
+
+    candidate_compatible_states_sequences.append(np.zeros((6, 13)))
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = -0.5
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 5] = 0.5
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = 0.5
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
+    candidate_compatible_states_sequences[-1][5, 4] = -0.5
+    candidate_compatible_states_sequences[-1][5, 6] = -0.35
+
+    candidate_compatible_states_sequences.append(np.zeros((6, 13)))
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = -0.6
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 5] = 0.6
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = 0.6
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
+    candidate_compatible_states_sequences[-1][5, 4] = -0.6
+    candidate_compatible_states_sequences[-1][5, 6] = -0.35
+
+    candidate_compatible_states_sequences.append(np.zeros((5, 13)))
+    candidate_compatible_states_sequences[-1][1, 5] = -0.7
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = 0.7
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 4] = 0.7
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = -0.7
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
+
+    lagrangian_sos_types = [
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ]
+    b_margins_sequence = [
+        None,
+        None,
+        np.array([0.05]),
+        np.array([0.05]),
+        np.array([0.02]),
+    ]
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
-
-    max_iter = 1
-    backoff_scales = [
+    V = V_init
+    b = b_init
+    max_iter_sequence = [1, 2, 1, 2, 1]
+    backoff_scale_sequence = [
+        BackoffScale(rel=None, abs=0.2),
+        BackoffScale(rel=None, abs=0.2),
+        BackoffScale(rel=None, abs=0.2),
+        BackoffScale(rel=None, abs=0.1),
         BackoffScale(rel=None, abs=0.2),
     ]
-    V, b = compatible.bilinear_alternation(
-        V_init,
-        b_init,
-        compatible_lagrangian_degrees,
-        unsafe_regions_lagrangian_degrees,
-        kappa_V,
-        kappa_b,
-        barrier_eps,
-        x_equilibrium,
-        V_degree,
-        b_degrees,
-        max_iter=max_iter,
-        solver_options=solver_options,
-        lagrangian_coefficient_tol=None,
-        compatible_states_options=compatible_states_options,
-        backoff_scales=backoff_scales,
-        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
-    )
-    pickle_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "../../data/quadrotor_clf_cbf.pkl"
-    )
-    clf_cbf.save_clf_cbf(V, b, x_set, kappa_V, kappa_b, pickle_path)
-    compatible_prog, compatible_lagrangians = (
-        compatible.construct_search_compatible_lagrangians(
+    for i in range(len(candidate_compatible_states_sequences)):
+        compatible_states_options = clf_cbf.CompatibleStatesOptions(
+            candidate_compatible_states=candidate_compatible_states_sequences[i],
+            anchor_states=np.zeros((1, 13)),
+            b_anchor_bounds=[(np.array([0.6]), np.array([1.0]))],
+            weight_V=1,
+            weight_b=np.array([1]),
+            b_margins=b_margins_sequence[i],
+        )
+
+        kappa_V = kappa_V_sequences[i]
+        kappa_b = kappa_b_sequences[i]
+        V, b = compatible.bilinear_alternation(
             V,
             b,
-            kappa_V=1e-3,
-            kappa_b=np.array([1e-3]),
-            lagrangian_degrees=compatible_lagrangian_degrees,
-            barrier_eps=barrier_eps,
-            local_clf=True,
+            compatible_lagrangian_degrees,
+            unsafe_regions_lagrangian_degrees,
+            kappa_V,
+            kappa_b,
+            barrier_eps,
+            x_equilibrium,
+            V_degree,
+            b_degrees,
+            max_iter=max_iter_sequence[i],
+            solver_options=solver_options,
+            lagrangian_coefficient_tol=None,
+            compatible_states_options=compatible_states_options,
+            backoff_scale=backoff_scale_sequence[i],
+            lagrangian_sos_type=lagrangian_sos_types[i],
         )
-    )
-    compatible_result = solvers.Solve(compatible_prog, None, solver_options)
-    assert compatible_result.is_success()
+        pickle_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            f"../../data/quadrotor_clf_cbf{i}.pkl",
+        )
+        clf_cbf.save_clf_cbf(V, b, x_set, kappa_V, kappa_b, pickle_path)
 
 
 if __name__ == "__main__":
