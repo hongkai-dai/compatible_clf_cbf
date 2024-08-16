@@ -609,3 +609,33 @@ def load_clf(pickle_path: str, x_set: sym.Variables) -> dict:
     ret["V"] = compatible_clf_cbf.utils.deserialize_polynomial(data["V"], x_set)
     ret["kappa"] = data["kappa"]
     return ret
+
+
+class ClfConstraint:
+    """
+    Add the linear constraint dVdx * f(x) + dVdx * g(x) * u <= -kappa * V on u.
+    """
+
+    def __init__(
+        self,
+        V: sym.Polynomial,
+        f: np.ndarray,
+        g: np.ndarray,
+        x: np.ndarray,
+        kappa: float,
+    ):
+        self.V = V
+        dVdx = V.Jacobian(x)
+        dVdx_times_f = dVdx.dot(f)
+        dVdx_times_g = dVdx @ g
+        self.rhs = -kappa * V - dVdx_times_f
+        self.lhs_coeff = dVdx_times_g
+        self.x = x
+
+    def add_to_prog(
+        self, prog: solvers.MathematicalProgram, x_val: np.ndarray, u: np.ndarray
+    ):
+        env = {self.x[i]: x_val[i] for i in range(x_val.size)}
+        lhs_coeff = np.array([p.Evaluate(env) for p in self.lhs_coeff])
+        rhs = self.rhs.Evaluate(env)
+        prog.AddLinearConstraint(lhs_coeff, -np.inf, rhs, u)

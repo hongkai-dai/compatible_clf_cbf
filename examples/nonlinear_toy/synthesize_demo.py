@@ -85,10 +85,7 @@ def main(with_u_bound: bool):
         binary_search_scale_options=None,
         compatible_states_options=compatible_states_options,
         solver_options=solver_options,
-        backoff_scales=[
-            compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None)
-            for _ in range(max_iter)
-        ],
+        backoff_scale=compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None),
     )
 
 

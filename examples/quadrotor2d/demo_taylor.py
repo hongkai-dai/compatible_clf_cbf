@@ -142,10 +142,7 @@ def search_clf_cbf(
         inner_ellipsoid_options=inner_ellipsoid_options,
         binary_search_scale_options=binary_search_scale_options,
         compatible_states_options=compatible_states_options,
-        backoff_scales=[
-            compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None)
-            for _ in range(max_iter)
-        ],
+        backoff_scale=compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None),
     )
     return V, b
 

@@ -145,55 +145,79 @@ class CompatibleLagrangianDegrees:
         y: sym.Variables,
         *,
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        lambda_y_lagrangian: Optional[np.ndarray] = None,
+        xi_y_lagrangian: Optional[sym.Polynomial] = None,
+        y_lagrangian: Optional[np.ndarray] = None,
+        rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+        b_plus_eps_lagrangian: Optional[np.ndarray] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
     ) -> CompatibleLagrangians:
-        lambda_y = np.array(
-            [
-                lambda_y_i.construct_polynomial(prog, x, y, is_sos=False)
-                for lambda_y_i in self.lambda_y
-            ]
-        )
-        xi_y = self.xi_y.construct_polynomial(prog, x, y, is_sos=False)
-        y_lagrangian = (
-            None
-            if self.y is None
-            else np.array(
+        if lambda_y_lagrangian is None:
+            lambda_y = np.array(
                 [
-                    y_i.construct_polynomial(prog, x, y, is_sos=True, sos_type=sos_type)
-                    for y_i in self.y
+                    lambda_y_i.construct_polynomial(prog, x, y, is_sos=False)
+                    for lambda_y_i in self.lambda_y
                 ]
             )
-        )
-        rho_minus_V = (
-            None
-            if self.rho_minus_V is None
-            else self.rho_minus_V.construct_polynomial(
-                prog, x, y, is_sos=True, sos_type=sos_type
+        else:
+            lambda_y = lambda_y_lagrangian
+        if xi_y_lagrangian is None:
+            xi_y = self.xi_y.construct_polynomial(prog, x, y, is_sos=False)
+        else:
+            xi_y = xi_y_lagrangian
+        if y_lagrangian is None:
+            y_lagrangian = (
+                None
+                if self.y is None
+                else np.array(
+                    [
+                        y_i.construct_polynomial(
+                            prog, x, y, is_sos=True, sos_type=sos_type
+                        )
+                        for y_i in self.y
+                    ]
+                )
             )
-        )
-        b_plus_eps = (
-            None
-            if self.b_plus_eps is None
-            else np.array(
-                [
-                    b_plus_eps_i.construct_polynomial(
-                        prog, x, y, is_sos=True, sos_type=sos_type
-                    )
-                    for b_plus_eps_i in self.b_plus_eps
-                ]
+        if rho_minus_V_lagrangian is None:
+            rho_minus_V = (
+                None
+                if self.rho_minus_V is None
+                else self.rho_minus_V.construct_polynomial(
+                    prog, x, y, is_sos=True, sos_type=sos_type
+                )
             )
-        )
-        state_eq_constraints = (
-            None
-            if self.state_eq_constraints is None
-            else np.array(
-                [
-                    state_eq_constraints_i.construct_polynomial(
-                        prog, x, y, is_sos=False
-                    )
-                    for state_eq_constraints_i in self.state_eq_constraints
-                ]
+        else:
+            rho_minus_V = rho_minus_V_lagrangian
+        if b_plus_eps_lagrangian is None:
+            b_plus_eps = (
+                None
+                if self.b_plus_eps is None
+                else np.array(
+                    [
+                        b_plus_eps_i.construct_polynomial(
+                            prog, x, y, is_sos=True, sos_type=sos_type
+                        )
+                        for b_plus_eps_i in self.b_plus_eps
+                    ]
+                )
             )
-        )
+        else:
+            b_plus_eps = b_plus_eps_lagrangian
+        if state_eq_constraints_lagrangian is None:
+            state_eq_constraints = (
+                None
+                if self.state_eq_constraints is None
+                else np.array(
+                    [
+                        state_eq_constraints_i.construct_polynomial(
+                            prog, x, y, is_sos=False
+                        )
+                        for state_eq_constraints_i in self.state_eq_constraints
+                    ]
+                )
+            )
+        else:
+            state_eq_constraints = state_eq_constraints_lagrangian
         return CompatibleLagrangians(
             lambda_y=lambda_y,
             xi_y=xi_y,
@@ -255,9 +279,15 @@ class UnsafeRegionLagrangianDegrees:
     state_eq_constraints: Optional[List[int]]
 
     def to_lagrangians(
-        self, prog: solvers.MathematicalProgram, x_set: sym.Variables
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        cbf_lagrangian: Optional[sym.Polynomial] = None,
     ) -> UnsafeRegionLagrangians:
-        cbf, _ = new_sos_polynomial(prog, x_set, self.cbf)
+        if cbf_lagrangian is None:
+            cbf, _ = new_sos_polynomial(prog, x_set, self.cbf)
+        else:
+            cbf = cbf_lagrangian
 
         unsafe_region = np.array(
             [
@@ -326,10 +356,14 @@ class CompatibleStatesOptions:
 
     # To encourage the compatible region to cover the candidate states, we add
     # this cost
-    # weight_V * ReLU(V(x_candidates) - 1)
-    #    + weight_b[i] * ReLU(-b[i](x_candidates))
+    # weight_V * ReLU(V(x_candidates) - (1-V_margin) )
+    #    + weight_b[i] * ReLU(-b[i](x_candidates) + b_margins[i])
     weight_V: Optional[float]
     weight_b: np.ndarray
+    # If not None, then we penalize the violation of V <= 1 - V_margin
+    V_margin: Optional[float] = None
+    # If not None, then we penalize the violation of b[i] >= b_margins[i]
+    b_margins: Optional[np.ndarray] = None
 
     def add_cost(
         self,
@@ -340,24 +374,24 @@ class CompatibleStatesOptions:
     ) -> Tuple[solvers.Binding[solvers.LinearCost], Optional[np.ndarray], np.ndarray]:
         """
         Adds the cost
-        weight_V * ReLU(V(x_candidates) - 1)
-           + weight_b[i] * ReLU(-b[i](x_candidates))
+        weight_V * ReLU(V(x_candidates) - 1 + V_margin)
+           + weight_b[i] * ReLU(-b[i](x_candidates) + b_margins[i])
         """
         assert b.shape == self.weight_b.shape
         num_candidates = self.candidate_compatible_states.shape[0]
         if V is not None:
-            # Add the slack variable representing ReLU(V(x_candidates)-1)
+            # Add the slack variable representing ReLU(V(x_candidates)-1 + V_margin)
             V_relu = prog.NewContinuousVariables(num_candidates, "V_relu")
             prog.AddBoundingBoxConstraint(0, np.inf, V_relu)
             # Now evaluate V(x_candidates) as A_v * V_decision_vars + b_v
             A_v, V_decision_vars, b_v = V.EvaluateWithAffineCoefficients(
                 x, self.candidate_compatible_states.T
             )
-            # Now impose the constraint V_relu >= V(x_candidates) - 1 as
-            # V_relu - A_v * V_decision_vars >= b_v -1
+            # Now impose the constraint V_relu >= V(x_candidates) - 1 + V_margin as
+            # V_relu - A_v * V_decision_vars >= b_v -1 + V_margin
             prog.AddLinearConstraint(
                 np.concatenate((-A_v, np.eye(num_candidates)), axis=1),
-                b_v - 1,
+                b_v - 1 + (0 if self.V_margin is None else self.V_margin),
                 np.full_like(b_v, np.inf),
                 np.concatenate((V_decision_vars, V_relu)),
             )
@@ -370,11 +404,12 @@ class CompatibleStatesOptions:
             A_b, b_decision_vars, b_b = b[i].EvaluateWithAffineCoefficients(
                 x, self.candidate_compatible_states.T
             )
-            # Now impose the constraint b_relu[i] >= -b[i](x_candidates) as
-            # A_b * b_decision_vars + b_relu[i] >= - b_b
+            # Now impose the constraint
+            # b_relu[i] >= -b[i](x_candidates) + b_margins[i] as
+            # A_b * b_decision_vars + b_relu[i] >= - b_b + b_margins[i]
             prog.AddLinearConstraint(
                 np.concatenate((A_b, np.eye(num_candidates)), axis=1),
-                -b_b,
+                -b_b + (0 if self.b_margins is None else self.b_margins[i]),
                 np.full_like(b_b, np.inf),
                 np.concatenate((b_decision_vars, b_relu[i])),
             )
@@ -704,7 +739,9 @@ class CompatibleClfCbf:
     def search_clf_cbf_given_lagrangian(
         self,
         compatible_lagrangians: CompatibleLagrangians,
+        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
         unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
+        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
         clf_degree: Optional[int],
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
@@ -719,6 +756,7 @@ class CompatibleClfCbf:
         backoff_rel_scale: Optional[float] = None,
         backoff_abs_scale: Optional[float] = None,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,  # noqa
     ) -> Tuple[
         Optional[sym.Polynomial],
         Optional[np.ndarray],
@@ -735,7 +773,9 @@ class CompatibleClfCbf:
         """
         prog, V, b = self._construct_search_clf_cbf_program(
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_regions_lagrangians,
+            unsafe_regions_lagrangian_degrees,
             clf_degree,
             cbf_degrees,
             x_equilibrium,
@@ -743,6 +783,7 @@ class CompatibleClfCbf:
             kappa_b,
             barrier_eps,
             compatible_sos_type=compatible_sos_type,
+            compatible_lagrangian_sos_type=compatible_lagrangian_sos_type,
         )
 
         if ellipsoid_inner is not None:
@@ -766,7 +807,9 @@ class CompatibleClfCbf:
     def binary_search_clf_cbf(
         self,
         compatible_lagrangians: CompatibleLagrangians,
+        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
         unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
+        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
         clf_degree: Optional[int],
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
@@ -806,7 +849,9 @@ class CompatibleClfCbf:
             )
             V, b, result = self.search_clf_cbf_given_lagrangian(
                 compatible_lagrangians,
+                compatible_lagrangian_degrees,
                 unsafe_regions_lagrangians,
+                unsafe_regions_lagrangian_degrees,
                 clf_degree,
                 cbf_degrees,
                 x_equilibrium,
@@ -907,7 +952,7 @@ class CompatibleClfCbf:
         inner_ellipsoid_options: Optional[InnerEllipsoidOptions] = None,
         binary_search_scale_options: Optional[BinarySearchOptions] = None,
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
-        backoff_scales: Optional[List[compatible_clf_cbf.utils.BackoffScale]] = None,
+        backoff_scale: Optional[compatible_clf_cbf.utils.BackoffScale] = None,
         lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
@@ -1020,6 +1065,7 @@ class CompatibleClfCbf:
                 assert binary_search_scale_options is not None
                 clf, cbf = self.binary_search_clf_cbf(
                     compatible_lagrangians,
+                    compatible_lagrangian_degrees,
                     unsafe_lagrangians,
                     clf_degree,
                     cbf_degrees,
@@ -1040,7 +1086,9 @@ class CompatibleClfCbf:
                 assert compatible_states_options is not None
                 clf, cbf, result = self.search_clf_cbf_given_lagrangian(
                     compatible_lagrangians,
+                    compatible_lagrangian_degrees,
                     unsafe_lagrangians,
+                    unsafe_regions_lagrangian_degrees,
                     clf_degree,
                     cbf_degrees,
                     x_equilibrium,
@@ -1052,16 +1100,13 @@ class CompatibleClfCbf:
                     solver_id=solver_id,
                     solver_options=solver_options,
                     backoff_rel_scale=(
-                        None
-                        if backoff_scales is None
-                        else backoff_scales[iteration].rel
+                        None if backoff_scale is None else backoff_scale.rel
                     ),
                     backoff_abs_scale=(
-                        None
-                        if backoff_scales is None
-                        else backoff_scales[iteration].abs
+                        None if backoff_scale is None else backoff_scale.abs
                     ),
                     compatible_sos_type=compatible_sos_type,
+                    compatible_lagrangian_sos_type=lagrangian_sos_type,
                 )
                 assert cbf is not None
         if compatible_states_options is not None:
@@ -1321,7 +1366,9 @@ class CompatibleClfCbf:
     def _construct_search_clf_cbf_program(
         self,
         compatible_lagrangians: CompatibleLagrangians,
+        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
         unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
+        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
         clf_degree: Optional[int],
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
@@ -1330,6 +1377,7 @@ class CompatibleClfCbf:
         barrier_eps: np.ndarray,
         local_clf: bool = True,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,  # noqa
     ) -> Tuple[
         solvers.MathematicalProgram,
         Optional[sym.Polynomial],
@@ -1383,10 +1431,30 @@ class CompatibleClfCbf:
                 for cbf_degree in cbf_degrees
             ]
         )
+        # We can search for the Lagrangians for the unsafe region as well, since
+        # the unsafe region is fixed.
+        unsafe_regions_lagrangians_new = [None] * len(self.unsafe_regions)
         for i in range(len(self.unsafe_regions)):
+            unsafe_regions_lagrangians_new[i] = unsafe_regions_lagrangian_degrees[
+                i
+            ].to_lagrangians(prog, self.x_set, unsafe_regions_lagrangians[i].cbf)
             self._add_barrier_safe_constraint(
-                prog, i, b[i], unsafe_regions_lagrangians[i]
+                prog, i, b[i], unsafe_regions_lagrangians_new[i]
             )
+
+        # We can search for some compatible Lagrangians as well, including the
+        # Lagrangians for y >= 0 and the state equality constraints, as y>= 0
+        # and the state equality constraints don't depend on V or b.
+        compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
+            prog,
+            self.x_set,
+            self.y_set,
+            sos_type=compatible_lagrangian_sos_type,
+            lambda_y_lagrangian=compatible_lagrangians.lambda_y,
+            xi_y_lagrangian=compatible_lagrangians.xi_y,
+            rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
+            b_plus_eps_lagrangian=compatible_lagrangians.b_plus_eps,
+        )
 
         self._add_compatibility(
             prog=prog,
@@ -1394,7 +1462,7 @@ class CompatibleClfCbf:
             b=b,
             kappa_V=kappa_V,
             kappa_b=kappa_b,
-            lagrangians=compatible_lagrangians,
+            lagrangians=compatible_lagrangians_new,
             barrier_eps=barrier_eps,
             local_clf=local_clf,
             sos_type=compatible_sos_type,

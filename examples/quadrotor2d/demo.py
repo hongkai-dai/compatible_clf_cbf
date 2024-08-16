@@ -112,10 +112,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         # solver_id = solvers.ClarabelSolver().id(),
         lagrangian_coefficient_tol=None,
         compatible_states_options=compatible_states_options,
-        backoff_scales=[
-            compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None)
-            for _ in range(max_iter)
-        ],
+        backoff_scale=compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None),
     )
     x_set = sym.Variables(x)
     pickle_path = os.path.join(

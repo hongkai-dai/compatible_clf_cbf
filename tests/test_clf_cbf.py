@@ -45,6 +45,8 @@ class TestCompatibleStatesOptions:
             b_anchor_bounds=None,
             weight_V=1.5,
             weight_b=np.array([1.2, 1.5]),
+            V_margin=0.1,
+            b_margins=np.array([0.2, 0.3]),
         )
         prog = solvers.MathematicalProgram()
         x = prog.NewIndeterminates(2, "x")
@@ -64,7 +66,8 @@ class TestCompatibleStatesOptions:
             result = solvers.Solve(prog)
 
             V_relu_expected = np.maximum(
-                V_val.EvaluateIndeterminates(x, dut.candidate_compatible_states.T) - 1,
+                V_val.EvaluateIndeterminates(x, dut.candidate_compatible_states.T)
+                - (1 - (0 if dut.V_margin is None else dut.V_margin)),
                 np.zeros(dut.candidate_compatible_states.shape[0]),
             )
             b_relu_expected = np.array(
@@ -72,7 +75,8 @@ class TestCompatibleStatesOptions:
                     np.maximum(
                         -b_val[i].EvaluateIndeterminates(
                             x, dut.candidate_compatible_states.T
-                        ),
+                        )
+                        + (0 if dut.b_margins is None else dut.b_margins[i]),
                         np.zeros(dut.candidate_compatible_states.shape[0]),
                     ).reshape((-1,))
                     for i in range(2)
@@ -711,7 +715,9 @@ class TestClfCbfToy:
     ) -> Tuple[
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
+        mut.CompatibleLagrangianDegrees,
         List[mut.UnsafeRegionLagrangians],
+        List[mut.UnsafeRegionLagrangianDegrees],
         sym.Polynomial,
         np.ndarray,
     ]:
@@ -773,7 +779,9 @@ class TestClfCbfToy:
         return (
             dut,
             compatible_lagrangians_result,
+            lagrangian_degrees,
             unsafe_lagrangians,
+            [unsafe_region_lagrangian_degrees],
             V_init,
             b_init,
         )
@@ -782,13 +790,17 @@ class TestClfCbfToy:
         (
             dut,
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             _,
             _,
         ) = self.search_lagrangians()
         prog, V, b = dut._construct_search_clf_cbf_program(
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=np.array([0, 0.0]),
@@ -822,7 +834,9 @@ class TestClfCbfToy:
         (
             dut,
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             V,
             b,
         ) = self.search_lagrangians()
@@ -850,7 +864,9 @@ class TestClfCbfToy:
 
         V_new, b_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=x_equilibrium,
@@ -875,7 +891,9 @@ class TestClfCbfToy:
         (
             dut,
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             V,
             b,
         ) = self.search_lagrangians()
@@ -889,7 +907,9 @@ class TestClfCbfToy:
         )
         V_new, b_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=np.array([0.0, 0.0]),
@@ -923,7 +943,9 @@ class TestClfCbfToy:
         (
             dut,
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             V_init,
             b_init,
         ) = self.search_lagrangians()
@@ -954,7 +976,9 @@ class TestClfCbfToy:
 
         V, b = dut.binary_search_clf_cbf(
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=x_equilibrium,
@@ -977,6 +1001,8 @@ class TestClfCbfToy:
     def test_check_compatible_at_state(self):
         (
             dut,
+            _,
+            _,
             _,
             _,
             V_init,
@@ -1034,7 +1060,9 @@ class TestClfCbfWStateEqConstraints:
     def search_lagrangians(self, check_result=False) -> Tuple[
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
+        mut.CompatibleLagrangianDegrees,
         List[mut.UnsafeRegionLagrangians],
+        List[mut.UnsafeRegionLagrangianDegrees],
         sym.Polynomial,
         np.ndarray,
     ]:
@@ -1107,7 +1135,9 @@ class TestClfCbfWStateEqConstraints:
         return (
             dut,
             compatible_lagrangians_result,
+            lagrangian_degrees,
             unsafe_lagrangians,
+            [unsafe_region_lagrangian_degrees],
             V_init,
             b_init,
         )
@@ -1119,7 +1149,9 @@ class TestClfCbfWStateEqConstraints:
         (
             dut,
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             V_init,
             b_init,
         ) = self.search_lagrangians(check_result=False)
@@ -1147,7 +1179,9 @@ class TestClfCbfWStateEqConstraints:
 
         V, b, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
+            compatible_lagrangian_degrees,
             unsafe_lagrangians,
+            unsafe_region_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=np.array([0.0, 0.0, 0.0]),
