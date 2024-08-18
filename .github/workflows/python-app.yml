@@ -27,5 +27,5 @@ jobs:
         run: python examples/linear_toy/linear_toy_w_input_limits_demo.py
       - name: run nonlinear_toy_demo
         run: python examples/nonlinear_toy/demo.py
-      - name: run nonlinear_toy_trigpoly_demo
-        run: python examples/nonlinear_toy/wo_input_limits_trigpoly_demo.py
+      - name: run nonlinear toy demo_trigpoly
+        run: python examples/nonlinear_toy/demo_trigpoly.py --unit_test
