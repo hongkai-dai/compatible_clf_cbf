@@ -53,11 +53,16 @@ def search_compatible_lagrangians(
 
 def search_barrier_safe_lagrangians(
     dut: clf_cbf.CompatibleClfCbf, b: np.ndarray
-) -> List[clf_cbf.UnsafeRegionLagrangians]:
-    lagrangian_degrees = clf_cbf.UnsafeRegionLagrangianDegrees(
-        cbf=2, unsafe_region=[2], state_eq_constraints=None
-    )
-    lagrangians = dut.certify_cbf_unsafe_region(0, b[0], lagrangian_degrees)
+) -> List[clf_cbf.SafetySetLagrangians]:
+    lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=2, unsafe_region=[2], state_eq_constraints=None
+            ),
+            within=None,
+        )
+    ]
+    lagrangians = dut.certify_cbf_safety_set(0, b[0], lagrangian_degrees[0])
     assert lagrangians is not None
     return [lagrangians]
 
@@ -69,7 +74,7 @@ def search_lagrangians(
     kappa_V: float,
     kappa_b: np.ndarray,
     barrier_eps: np.ndarray,
-) -> Tuple[clf_cbf.CompatibleLagrangians, List[clf_cbf.UnsafeRegionLagrangians]]:
+) -> Tuple[clf_cbf.CompatibleLagrangians, List[clf_cbf.SafetySetLagrangians]]:
     compatible_lagrangians = search_compatible_lagrangians(
         dut, V, b, kappa_V, kappa_b, barrier_eps
     )
@@ -97,7 +102,12 @@ def search():
 
     # Use an arbitrary unsafe region
     alpha = 0.5
-    unsafe_regions = [np.array([1.1 * alpha - sym.Polynomial(x.dot(S_lqr @ x))])]
+    safety_sets = [
+        clf_cbf.SafetySet(
+            exclude=np.array([1.1 * alpha - sym.Polynomial(x.dot(S_lqr @ x))]),
+            within=None,
+        )
+    ]
 
     Au = np.array([[1, 0], [0, 1], [-1, 0], [0, -1.0]])
     bu = np.array([10, 10, 10, 10])
@@ -106,7 +116,7 @@ def search():
         f=f,
         g=g,
         x=x,
-        unsafe_regions=unsafe_regions,
+        safety_sets=safety_sets,
         Au=Au,
         bu=bu,
         with_clf=True,
