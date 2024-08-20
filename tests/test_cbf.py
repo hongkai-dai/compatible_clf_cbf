@@ -9,7 +9,8 @@ import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 import pydrake.systems.controllers as controllers
 
-from compatible_clf_cbf.clf_cbf import UnsafeRegionLagrangians
+from compatible_clf_cbf.clf_cbf import ExcludeRegionLagrangians
+import compatible_clf_cbf.clf_cbf as clf_cbf
 from compatible_clf_cbf.utils import is_sos
 
 
@@ -62,11 +63,14 @@ class TestCbf:
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_region=np.array(
-                [
-                    sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
-                    sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
-                ]
+            safety_set=clf_cbf.SafetySet(
+                exclude=np.array(
+                    [
+                        sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
+                        sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
+                    ]
+                ),
+                within=None,
             ),
             u_vertices=None,
             state_eq_constraints=None,
@@ -75,7 +79,7 @@ class TestCbf:
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(dut.x_set)
 
-        lagrangians = UnsafeRegionLagrangians(
+        lagrangians = ExcludeRegionLagrangians(
             cbf=sym.Polynomial(1 + self.x[0]),
             unsafe_region=np.array(
                 [sym.Polynomial(2 + self.x[0]), sym.Polynomial(3 - self.x[1])]
@@ -83,9 +87,9 @@ class TestCbf:
             state_eq_constraints=None,
         )
 
-        poly = dut._add_barrier_safe_constraint(prog, b, lagrangians)
+        poly = dut._add_barrier_exclude_constraint(prog, b, lagrangians)
         poly_expected = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
-            dut.unsafe_region
+            dut.safety_set.exclude
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
 
@@ -94,11 +98,14 @@ class TestCbf:
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_region=np.array(
-                [
-                    sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
-                    sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
-                ]
+            safety_set=clf_cbf.SafetySet(
+                exclude=np.array(
+                    [
+                        sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
+                        sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
+                    ]
+                ),
+                within=None,
             ),
             u_vertices=None,
             state_eq_constraints=None,

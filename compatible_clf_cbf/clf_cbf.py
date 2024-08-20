@@ -229,7 +229,80 @@ class CompatibleLagrangianDegrees:
 
 
 @dataclass
-class UnsafeRegionLagrangians:
+class WithinRegionLagrangians:
+    """
+    The Lagrangians for certifying that the 0-super level set of a CBF is a
+    subset of the safe region.
+
+    for a CBF b(x), to prove that the 0-super level set {x | b(x) >= 0} is a
+    subset of the safe set {x | p(x) <= 0}, we can impose the constraint
+    −(1+ϕ₀(x))p(x) − ϕ₁(x)b(x) is sos.
+    ϕ₀(x) is sos
+    ϕ₁(x) is sos.
+    """
+
+    cbf: sym.Polynomial
+    safe_region: sym.Polynomial
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        return WithinRegionLagrangians(
+            cbf=get_polynomial_result(result, self.cbf, coefficient_tol),
+            safe_region=get_polynomial_result(
+                result, self.safe_region, coefficient_tol
+            ),
+            state_eq_constraints=(
+                None
+                if self.state_eq_constraints is None
+                else get_polynomial_result(
+                    result, self.state_eq_constraints, coefficient_tol
+                )
+            ),
+        )
+
+
+@dataclass
+class WithinRegionLagrangianDegrees:
+    cbf: int
+    safe_region: int
+    state_eq_constraints: Optional[List[int]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        cbf_lagrangian: Optional[sym.Polynomial] = None,
+    ) -> WithinRegionLagrangians:
+        if cbf_lagrangian is None:
+            cbf, _ = new_sos_polynomial(prog, x_set, self.cbf)
+        else:
+            cbf = cbf_lagrangian
+
+        safe_region = new_sos_polynomial(prog, x_set, self.safe_region)[0]
+
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    prog.NewFreePolynomial(x_set, degree)
+                    for degree in self.state_eq_constraints
+                ]
+            )
+        )
+        return WithinRegionLagrangians(
+            cbf=cbf,
+            safe_region=safe_region,
+            state_eq_constraints=state_eq_constraints,
+        )
+
+
+@dataclass
+class ExcludeRegionLagrangians:
     """
     The Lagrangians for certifying that the 0-super level set of a CBF doesn't
     intersect with an unsafe region.
@@ -257,7 +330,7 @@ class UnsafeRegionLagrangians:
         result: solvers.MathematicalProgramResult,
         coefficient_tol: Optional[float],
     ) -> Self:
-        return UnsafeRegionLagrangians(
+        return ExcludeRegionLagrangians(
             cbf=get_polynomial_result(result, self.cbf, coefficient_tol),
             unsafe_region=get_polynomial_result(
                 result, self.unsafe_region, coefficient_tol
@@ -273,7 +346,7 @@ class UnsafeRegionLagrangians:
 
 
 @dataclass
-class UnsafeRegionLagrangianDegrees:
+class ExcludeRegionLagrangianDegrees:
     cbf: int
     unsafe_region: List[int]
     state_eq_constraints: Optional[List[int]]
@@ -283,7 +356,7 @@ class UnsafeRegionLagrangianDegrees:
         prog: solvers.MathematicalProgram,
         x_set: sym.Variables,
         cbf_lagrangian: Optional[sym.Polynomial] = None,
-    ) -> UnsafeRegionLagrangians:
+    ) -> ExcludeRegionLagrangians:
         if cbf_lagrangian is None:
             cbf, _ = new_sos_polynomial(prog, x_set, self.cbf)
         else:
@@ -306,11 +379,94 @@ class UnsafeRegionLagrangianDegrees:
                 ]
             )
         )
-        return UnsafeRegionLagrangians(
+        return ExcludeRegionLagrangians(
             cbf=cbf,
             unsafe_region=unsafe_region,
             state_eq_constraints=state_eq_constraints,
         )
+
+
+@dataclass
+class SafetySet:
+    """
+    The safety set is described as the complement of the "exclusion region",
+    intersecting with the "within region".
+    Mathematically it is
+    {x | exclude[i](x) > 0 for some i, and within[j](x) <= 0 for all j}
+    """
+
+    # An array of polynomials.
+    exclude: Optional[np.ndarray]
+    # An array of polynomials.
+    within: Optional[np.ndarray]
+
+
+@dataclass
+class SafetySetLagrangians:
+    exclude: Optional[ExcludeRegionLagrangians]
+    within: Optional[List[WithinRegionLagrangians]]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        exclude = (
+            None
+            if self.exclude is None
+            else self.exclude.get_result(result, coefficient_tol)
+        )
+        within = (
+            None
+            if self.within is None
+            else [a.get_result(result, coefficient_tol) for a in self.within]
+        )
+        return SafetySetLagrangians(exclude=exclude, within=within)
+
+    def get_cbf_lagrangians(
+        self,
+    ) -> Tuple[Optional[sym.Polynomial], Optional[List[sym.Polynomial]]]:
+        exclude_cbf = None if self.exclude is None else self.exclude.cbf
+        within_cbf = (
+            None if self.within is None else [within.cbf for within in self.within]
+        )
+        return exclude_cbf, within_cbf
+
+
+@dataclass
+class SafetySetLagrangianDegrees:
+    exclude: Optional[ExcludeRegionLagrangianDegrees]
+    within: Optional[List[WithinRegionLagrangianDegrees]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        cbf_lagrangian: Optional[
+            Tuple[Optional[sym.Polynomial], Optional[List[sym.Polynomial]]]
+        ] = None,
+    ) -> SafetySetLagrangians:
+
+        exclude = (
+            None
+            if self.exclude is None
+            else self.exclude.to_lagrangians(
+                prog, x_set, (None if cbf_lagrangian is None else cbf_lagrangian[0])
+            )
+        )
+        within = (
+            None
+            if self.within is None
+            else [
+                self.within[i].to_lagrangians(
+                    prog,
+                    x_set,
+                    (None if cbf_lagrangian is None else cbf_lagrangian[1][i]),
+                )
+                for i in range(len(self.within))
+            ]
+        )
+        return SafetySetLagrangians(exclude=exclude, within=within)
 
 
 @dataclass
@@ -501,7 +657,7 @@ class CompatibleClfCbf:
         f: np.ndarray,
         g: np.ndarray,
         x: np.ndarray,
-        unsafe_regions: List[np.ndarray],
+        safety_sets: List[SafetySet],
         Au: Optional[np.ndarray] = None,
         bu: Optional[np.ndarray] = None,
         with_clf: bool = True,
@@ -519,10 +675,9 @@ class CompatibleClfCbf:
           x: np.ndarray
             An array of symbolic variables representing the state.
             The shape is (nx,)
-          unsafe_regions: List[np.ndarray]
-            A list of numpy arrays of polynomials. unsafe_regions[i] is the i'th
-            unsafe region (to be certified by the i'th CBF). The i'th unsafe
-            region is the 0-sublevel set of unsafe_regions[i].
+          safety_set: List[SafetySet]
+            A list of safety set descriptions. For each SafetySet object we will
+            certify/synthesize a corresponding CBF.
           Au: Optional[np.ndarray]
             The set of admissible control is Au * u <= bu.
             The shape is (Any, nu)
@@ -564,9 +719,7 @@ class CompatibleClfCbf:
         self.x_set: sym.Variables = sym.Variables(x)
         check_array_of_polynomials(f, self.x_set)
         check_array_of_polynomials(g, self.x_set)
-        for unsafe_region in unsafe_regions:
-            check_array_of_polynomials(unsafe_region, self.x_set)
-        self.unsafe_regions = unsafe_regions
+        self.safety_sets = safety_sets
         if Au is not None:
             assert Au.shape[1] == self.nu
             assert bu is not None
@@ -575,8 +728,9 @@ class CompatibleClfCbf:
         self.bu = bu
         self.with_clf = with_clf
         self.use_y_squared = use_y_squared
+        self.num_cbf = len(self.safety_sets)
         y_size = (
-            len(self.unsafe_regions)
+            self.num_cbf
             + (1 if self.with_clf else 0)
             + (self.Au.shape[0] if self.Au is not None else 0)
         )
@@ -596,18 +750,98 @@ class CompatibleClfCbf:
         if self.state_eq_constraints is not None:
             check_array_of_polynomials(self.state_eq_constraints, self.x_set)
 
-    def certify_cbf_unsafe_region(
+    def certify_cbf_safety_set(
         self,
-        unsafe_region_index: int,
+        safety_set_index: int,
         cbf: sym.Polynomial,
-        lagrangian_degrees: UnsafeRegionLagrangianDegrees,
+        lagrangian_degrees: SafetySetLagrangianDegrees,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
-    ) -> Optional[UnsafeRegionLagrangians]:
+    ) -> Optional[SafetySetLagrangians]:
+        """
+        Certify the 0-super level set of barrier function b(x) is within the
+        safety set self.safety_set[safety_set_index]
+        """
+        safety_set = self.safety_sets[safety_set_index]
+        if safety_set.exclude is not None:
+            assert lagrangian_degrees.exclude is not None
+            exclude_lagrangians = self.certify_cbf_exclude(
+                safety_set_index,
+                cbf,
+                lagrangian_degrees.exclude,
+                solver_id,
+                solver_options,
+                lagrangian_coefficient_tol,
+            )
+            if exclude_lagrangians is None:
+                return None
+        else:
+            exclude_lagrangians = None
+        if safety_set.within is not None:
+            within_lagrangians = [None] * safety_set.within.size
+            assert lagrangian_degrees.within is not None
+            for i in range(safety_set.within.size):
+                within_lagrangians[i] = self.certify_cbf_within(
+                    safety_set_index,
+                    i,
+                    cbf,
+                    lagrangian_degrees.within[i],
+                    solver_id,
+                    solver_options,
+                    lagrangian_coefficient_tol,
+                )
+                if within_lagrangians[i] is None:
+                    return None
+
+        else:
+            within_lagrangians = None
+        lagrangian_result = SafetySetLagrangians(
+            exclude=exclude_lagrangians, within=within_lagrangians
+        )
+
+        return lagrangian_result
+
+    def certify_cbf_within(
+        self,
+        safety_set_index: int,
+        within_index: int,
+        cbf: sym.Polynomial,
+        lagrangian_degrees: WithinRegionLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Optional[WithinRegionLagrangians]:
+        """
+        Certify the 0-super level set of barrier function b(x) is within the
+        region self.safety_sets[safety_set_index].within[within_index]
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set)
+        self._add_barrier_within_constraint(
+            prog, safety_set_index, within_index, cbf, lagrangians
+        )
+        result = solve_with_id(prog, solver_id, solver_options)
+        lagrangians_result = (
+            lagrangians.get_result(result, lagrangian_coefficient_tol)
+            if result.is_success()
+            else None
+        )
+        return lagrangians_result
+
+    def certify_cbf_exclude(
+        self,
+        safety_set_index: int,
+        cbf: sym.Polynomial,
+        lagrangian_degrees: ExcludeRegionLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Optional[ExcludeRegionLagrangians]:
         """
         Certifies that the 0-superlevel set {x | bᵢ(x) >= 0} does not intersect
-        with the unsafe region self.unsafe_regions[unsafe_region_index].
+        with the unsafe region self.safety_set[safety_set_index].exclude
 
         If we denote the unsafe region as {x | p(x) <= 0}, then we impose the constraint
 
@@ -616,15 +850,15 @@ class CompatibleClfCbf:
         ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
 
         Args:
-          unsafe_region_index: We certify the CBF for the region
-            self.unsafe_regions[unsafe_region_index]
+          safety_set_index: We certify the CBF for the region
+            self.safety_sets[safety_set_index].exclude
           cbf: bᵢ(x) in the documentation above. The CBF function for
-            self.unsafe_regions[unsafe_region_index]
+            self.safety_set[safety_set_index]
         """
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x_set)
         lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set)
-        self._add_barrier_safe_constraint(prog, unsafe_region_index, cbf, lagrangians)
+        self._add_barrier_exclude_constraint(prog, safety_set_index, cbf, lagrangians)
         result = solve_with_id(prog, solver_id, solver_options)
         lagrangians_result = (
             lagrangians.get_result(result, lagrangian_coefficient_tol)
@@ -691,14 +925,15 @@ class CompatibleClfCbf:
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
         compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
-        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        safety_set_lagrangian_degrees: List[SafetySetLagrangianDegrees],
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
         lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[
-        Optional[CompatibleLagrangians], List[Optional[UnsafeRegionLagrangians]]
+        Optional[CompatibleLagrangians],
+        List[Optional[SafetySetLagrangians]],
     ]:
         (
             prog_compatible,
@@ -722,26 +957,27 @@ class CompatibleClfCbf:
             if result_compatible.is_success()
             else None
         )
-        unsafe_lagrangians_result: List[Optional[UnsafeRegionLagrangians]] = [
+
+        safety_set_lagrangians_result: List[Optional[SafetySetLagrangians]] = [
             None
-        ] * len(self.unsafe_regions)
-        for i in range(len(self.unsafe_regions)):
-            unsafe_lagrangians_result[i] = self.certify_cbf_unsafe_region(
+        ] * self.num_cbf
+        for i in range(self.num_cbf):
+            safety_set_lagrangians_result[i] = self.certify_cbf_safety_set(
                 i,
                 b[i],
-                unsafe_regions_lagrangian_degrees[i],
+                safety_set_lagrangian_degrees[i],
                 solver_id,
                 solver_options,
                 lagrangian_coefficient_tol,
             )
-        return compatible_lagrangians_result, unsafe_lagrangians_result
+        return compatible_lagrangians_result, safety_set_lagrangians_result
 
     def search_clf_cbf_given_lagrangian(
         self,
         compatible_lagrangians: CompatibleLagrangians,
         compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
-        unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
-        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        safety_sets_lagrangians: List[SafetySetLagrangians],
+        safety_sets_lagrangian_degrees: List[SafetySetLagrangianDegrees],
         clf_degree: Optional[int],
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
@@ -774,8 +1010,8 @@ class CompatibleClfCbf:
         prog, V, b = self._construct_search_clf_cbf_program(
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_regions_lagrangians,
-            unsafe_regions_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             clf_degree,
             cbf_degrees,
             x_equilibrium,
@@ -808,8 +1044,8 @@ class CompatibleClfCbf:
         self,
         compatible_lagrangians: CompatibleLagrangians,
         compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
-        unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
-        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        safety_sets_lagrangians: List[SafetySetLagrangians],
+        safety_sets_lagrangian_degrees: List[SafetySetLagrangianDegrees],
         clf_degree: Optional[int],
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
@@ -850,8 +1086,8 @@ class CompatibleClfCbf:
             V, b, result = self.search_clf_cbf_given_lagrangian(
                 compatible_lagrangians,
                 compatible_lagrangian_degrees,
-                unsafe_regions_lagrangians,
-                unsafe_regions_lagrangian_degrees,
+                safety_sets_lagrangians,
+                safety_sets_lagrangian_degrees,
                 clf_degree,
                 cbf_degrees,
                 x_equilibrium,
@@ -937,7 +1173,7 @@ class CompatibleClfCbf:
         V_init: Optional[sym.Polynomial],
         b_init: np.ndarray,
         compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
-        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        safety_sets_lagrangian_degrees: List[SafetySetLagrangianDegrees],
         kappa_V: Optional[float],
         kappa_b: np.ndarray,
         barrier_eps: np.ndarray,
@@ -987,12 +1223,12 @@ class CompatibleClfCbf:
 
         iteration = 0
         clf = V_init
-        assert len(b_init) == len(self.unsafe_regions)
+        assert len(b_init) == len(self.safety_sets)
         cbf = b_init
 
         compatible_lagrangians = None
-        unsafe_lagrangians: List[Optional[UnsafeRegionLagrangians]] = [None] * len(
-            self.unsafe_regions
+        safety_sets_lagrangians: List[Optional[SafetySetLagrangians]] = [None] * len(
+            self.safety_sets
         )
 
         def evaluate_compatible_states(clf_fun, cbf_funs, x_val):
@@ -1018,7 +1254,7 @@ class CompatibleClfCbf:
             # Search for the Lagrangians.
             (
                 compatible_lagrangians,
-                unsafe_lagrangians,
+                safety_sets_lagrangians,
             ) = self.search_lagrangians_given_clf_cbf(
                 clf,
                 cbf,
@@ -1026,7 +1262,7 @@ class CompatibleClfCbf:
                 kappa_b,
                 barrier_eps,
                 compatible_lagrangian_degrees,
-                unsafe_regions_lagrangian_degrees,
+                safety_sets_lagrangian_degrees,
                 solver_id,
                 solver_options,
                 lagrangian_coefficient_tol,
@@ -1034,7 +1270,7 @@ class CompatibleClfCbf:
                 compatible_sos_type=compatible_sos_type,
             )
             assert compatible_lagrangians is not None
-            assert all(unsafe_lagrangians)
+            assert all(safety_sets_lagrangians)
 
             if inner_ellipsoid_options is not None:
                 # We use the heuristics to grow the inner ellipsoid.
@@ -1066,7 +1302,7 @@ class CompatibleClfCbf:
                 clf, cbf = self.binary_search_clf_cbf(
                     compatible_lagrangians,
                     compatible_lagrangian_degrees,
-                    unsafe_lagrangians,
+                    safety_sets_lagrangians,
                     clf_degree,
                     cbf_degrees,
                     x_equilibrium,
@@ -1087,8 +1323,8 @@ class CompatibleClfCbf:
                 clf, cbf, result = self.search_clf_cbf_given_lagrangian(
                     compatible_lagrangians,
                     compatible_lagrangian_degrees,
-                    unsafe_lagrangians,
-                    unsafe_regions_lagrangian_degrees,
+                    safety_sets_lagrangians,
+                    safety_sets_lagrangian_degrees,
                     clf_degree,
                     cbf_degrees,
                     x_equilibrium,
@@ -1198,34 +1434,33 @@ class CompatibleClfCbf:
         Returns:
           (xi, lambda_mat) ξ(x) and Λ(x) in the documentation above.
         """
-        num_unsafe_regions = len(self.unsafe_regions)
         if self.with_clf:
             assert V is not None
             assert isinstance(V, sym.Polynomial)
             dVdx = V.Jacobian(self.x)
-            xi_rows = num_unsafe_regions + 1
+            xi_rows = self.num_cbf + 1
         else:
             assert V is None
             dVdx = None
-            xi_rows = num_unsafe_regions
+            xi_rows = self.num_cbf
             assert b.size > 1, "You should use multiple CBF when with_clf is False."
         if self.Au is not None:
             xi_rows += self.Au.shape[0]
-        assert b.shape == (len(self.unsafe_regions),)
+        assert b.shape == (self.num_cbf,)
         assert kappa_b.shape == b.shape
         dbdx = np.concatenate(
             [b[i].Jacobian(self.x).reshape((1, -1)) for i in range(b.size)], axis=0
         )
         lambda_mat = np.empty((xi_rows, self.nu), dtype=object)
-        lambda_mat[:num_unsafe_regions] = -dbdx @ self.g
+        lambda_mat[: self.num_cbf] = -dbdx @ self.g
         xi = np.empty((xi_rows,), dtype=object)
-        xi[:num_unsafe_regions] = dbdx @ self.f + kappa_b * b
+        xi[: self.num_cbf] = dbdx @ self.f + kappa_b * b
 
         if self.with_clf:
             assert V is not None
             assert dVdx is not None
-            lambda_mat[num_unsafe_regions] = dVdx @ self.g
-            xi[num_unsafe_regions] = -dVdx.dot(self.f) - kappa_V * V
+            lambda_mat[self.num_cbf] = dVdx @ self.g
+            xi[self.num_cbf] = -dVdx.dot(self.f) - kappa_V * V
         if self.Au is not None:
             lambda_mat[-self.Au.shape[0] :] = self.Au
             xi[-self.Au.shape[0] :] = self.bu
@@ -1320,16 +1555,49 @@ class CompatibleClfCbf:
         prog.AddSosConstraint(poly, sos_type)
         return poly
 
-    def _add_barrier_safe_constraint(
+    def _add_barrier_within_constraint(
         self,
         prog: solvers.MathematicalProgram,
-        unsafe_region_index: int,
+        safety_set_index: int,
+        within_index: int,
         b: sym.Polynomial,
-        lagrangians: UnsafeRegionLagrangians,
+        lagrangians: WithinRegionLagrangians,
+    ) -> sym.Polynomial:
+        """
+        Adds the constraint that the 0-super level set of the barrier function
+        is in the safe region {x | pᵢ(x) <= 0}.
+        −(1+ϕ₀(x))pᵢ(x) − ϕ₁(x)b(x) is sos.
+
+        Note it doesn't add the constraints
+        ϕ₀(x) is sos
+        ϕ₁(x) is sos.
+
+        Args:
+          safe_region_index: pᵢ(x) =
+            self.safety_sets[safety_set_index].within[within_index]
+        """
+        assert self.safety_sets[safety_set_index].within is not None
+        poly = (
+            -(1 + lagrangians.safe_region)
+            * self.safety_sets[safety_set_index].within[within_index]
+            - lagrangians.cbf * b
+        )
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        prog.AddSosConstraint(poly)
+        return poly
+
+    def _add_barrier_exclude_constraint(
+        self,
+        prog: solvers.MathematicalProgram,
+        safety_set_index: int,
+        b: sym.Polynomial,
+        lagrangians: ExcludeRegionLagrangians,
     ) -> sym.Polynomial:
         """
         Adds the constraint that the 0-superlevel set of the barrier function
-        does not intersect with the unsafe region.
+        does not intersect with the exclude region.
         Since the i'th unsafe regions is defined as the 0-sublevel set of
         polynomials p(x), we want to certify that the set {x|p(x)≤0, bᵢ(x)≥0}
         is empty.
@@ -1342,20 +1610,21 @@ class CompatibleClfCbf:
         It doesn't add the constraint ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
 
         Args:
-          unsafe_region_index: We certify that the 0-superlevel set of the
-            barrier function doesn't intersect with the unsafe region
-            self.unsafe_regions[unsafe_region_index]
+          safety_set_index: We certify that the 0-superlevel set of the
+            barrier function doesn't intersect with the exclude region
+            self.safety_sets[safety_set_index].exclude
           b: a polynomial, b is the barrier function for the
-            unsafe region self.unsafe_regions[unsafe_region_index].
+            exclude region self.safety_sets[safety_set_index].
           lagrangians: A array of polynomials, ϕᵢ(x) in the documentation above.
         Returns:
           poly: poly is the polynomial -(1+ϕᵢ,₀(x))bᵢ(x) + ∑ⱼϕᵢ,ⱼ(x)pⱼ(x)
         """
+        assert self.safety_sets[safety_set_index].exclude is not None
         assert lagrangians.unsafe_region.size == len(
-            self.unsafe_regions[unsafe_region_index]
+            self.safety_sets[safety_set_index].exclude
         )
         poly = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
-            self.unsafe_regions[unsafe_region_index]
+            self.safety_sets[safety_set_index].exclude
         )
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
@@ -1367,8 +1636,8 @@ class CompatibleClfCbf:
         self,
         compatible_lagrangians: CompatibleLagrangians,
         compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
-        unsafe_regions_lagrangians: List[UnsafeRegionLagrangians],
-        unsafe_regions_lagrangian_degrees: List[UnsafeRegionLagrangianDegrees],
+        safety_sets_lagrangians: List[SafetySetLagrangians],
+        safety_sets_lagrangian_degrees: List[SafetySetLagrangianDegrees],
         clf_degree: Optional[int],
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
@@ -1390,15 +1659,14 @@ class CompatibleClfCbf:
         Args:
           compatible_lagrangians: The Lagrangian polynomials. Result from
             solving construct_search_compatible_lagrangians().
-          unsafe_regions_lagrangians: unsafe_regions_lagrangians[i] is the
-            Lagrangian polynomial for the i'th CBF to certify that the CBF
-            0-super level set doesn't intersect with the i'th unsafe region.
+          safety_sets_lagrangians: The Lagrangians certifying that the 0-super
+            level set of the i'th CBF is in the i'th safety set self.safety_sets[i].
           clf_degree: if not None, the total degree of CLF.
           cbf_degrees: cbf_degrees[i] is the total degree of the i'th CBF.
           x_equilibrium: if not None, the equilibrium state.
         """
-        assert len(unsafe_regions_lagrangians) == len(self.unsafe_regions)
-        assert len(cbf_degrees) == len(self.unsafe_regions)
+        assert len(safety_sets_lagrangians) == len(self.safety_sets)
+        assert len(cbf_degrees) == len(self.safety_sets)
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.xy_set)
 
@@ -1431,16 +1699,26 @@ class CompatibleClfCbf:
                 for cbf_degree in cbf_degrees
             ]
         )
-        # We can search for the Lagrangians for the unsafe region as well, since
-        # the unsafe region is fixed.
-        unsafe_regions_lagrangians_new = [None] * len(self.unsafe_regions)
-        for i in range(len(self.unsafe_regions)):
-            unsafe_regions_lagrangians_new[i] = unsafe_regions_lagrangian_degrees[
+        # We can search for the Lagrangians for the safety set as well, since
+        # the safety set is fixed.
+        safety_sets_lagrangians_new: List[SafetySetLagrangians] = [None] * len(
+            self.safety_sets
+        )
+        for i in range(len(self.safety_sets)):
+            cbf_lagrangian = safety_sets_lagrangians[i].get_cbf_lagrangians()
+            safety_sets_lagrangians_new[i] = safety_sets_lagrangian_degrees[
                 i
-            ].to_lagrangians(prog, self.x_set, unsafe_regions_lagrangians[i].cbf)
-            self._add_barrier_safe_constraint(
-                prog, i, b[i], unsafe_regions_lagrangians_new[i]
-            )
+            ].to_lagrangians(prog, self.x_set, cbf_lagrangian)
+            if self.safety_sets[i].exclude is not None:
+                assert safety_sets_lagrangians_new[i].exclude is not None
+                self._add_barrier_exclude_constraint(
+                    prog, i, b[i], safety_sets_lagrangians_new[i].exclude
+                )
+            if self.safety_sets[i].within is not None:
+                for j in range(self.safety_sets[i].within.size):
+                    self._add_barrier_within_constraint(
+                        prog, i, j, b[i], safety_sets_lagrangians_new[i].within[j]
+                    )
 
         # We can search for some compatible Lagrangians as well, including the
         # Lagrangians for y >= 0 and the state equality constraints, as y>= 0

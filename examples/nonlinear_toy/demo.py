@@ -22,11 +22,14 @@ def main(use_y_squared: bool, with_u_bound: bool):
     else:
         Au = None
         bu = None
+    safety_sets = [
+        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[0] + 10)]), within=None)
+    ]
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        unsafe_regions=[np.array([sym.Polynomial(x[0] + 10)])],
+        safety_sets=safety_sets,
         Au=Au,
         bu=bu,
         with_clf=True,
@@ -64,17 +67,24 @@ def main(use_y_squared: bool, with_u_bound: bool):
     compatible_result = solvers.Solve(compatible_prog, None, solver_options)
     assert compatible_result.is_success()
 
-    unsafe_region_lagrangian_degrees = clf_cbf.UnsafeRegionLagrangianDegrees(
-        cbf=0, unsafe_region=[0], state_eq_constraints=None
-    )
+    safety_sets_lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=0, unsafe_region=[0], state_eq_constraints=None
+            ),
+            within=None,
+        )
+    ]
 
-    unsafe_region_lagrangians = compatible.certify_cbf_unsafe_region(
-        unsafe_region_index=0,
-        cbf=b_init[0],
-        lagrangian_degrees=unsafe_region_lagrangian_degrees,
-        solver_options=None,
-    )
-    assert unsafe_region_lagrangians is not None
+    safety_sets_lagrangians = [
+        compatible.certify_cbf_safety_set(
+            safety_set_index=0,
+            cbf=b_init[0],
+            lagrangian_degrees=safety_sets_lagrangian_degrees[0],
+            solver_options=None,
+        )
+    ]
+    assert safety_sets_lagrangians[0] is not None
 
 
 if __name__ == "__main__":

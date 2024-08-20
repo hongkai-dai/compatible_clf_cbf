@@ -137,11 +137,12 @@ def search(unit_test_flag: bool = False):
     f, g = toy_system.affine_trig_poly_dynamics(x)
     state_eq_constraints = np.array([toy_system.affine_trig_poly_state_constraints(x)])
     use_y_squared = True
+    safety_sets = [clf_cbf.SafetySet(exclude=get_unsafe_regions(x), within=None)]
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        unsafe_regions=[get_unsafe_regions(x)],
+        safety_sets=safety_sets,
         Au=np.array([[1], [-1]]),
         bu=np.array([1, 1]),
         with_clf=True,
@@ -158,9 +159,12 @@ def search(unit_test_flag: bool = False):
         b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
-    unsafe_region_lagrangian_degrees = [
-        clf_cbf.UnsafeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+    safety_sets_lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+            ),
+            within=None,
         )
     ]
     kappa_V = 0.01
@@ -196,7 +200,7 @@ def search(unit_test_flag: bool = False):
         V_init,
         b_init,
         compatible_lagrangian_degrees,
-        unsafe_region_lagrangian_degrees,
+        safety_sets_lagrangian_degrees,
         kappa_V,
         kappa_b,
         barrier_eps,

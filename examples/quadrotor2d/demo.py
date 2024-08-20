@@ -30,13 +30,15 @@ def main(use_y_squared: bool, with_u_bound: bool):
         Au, bu = None, None
 
     # Ground as the unsafe region.
-    unsafe_regions = [np.array([sym.Polynomial(x[1] + 0.5)])]
+    safety_sets = [
+        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[1] + 0.5)]), within=None)
+    ]
     state_eq_constraints = quadrotor.equality_constraint(x)
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        unsafe_regions=unsafe_regions,
+        safety_sets=safety_sets,
         Au=Au,
         bu=bu,
         with_clf=True,
@@ -73,9 +75,12 @@ def main(use_y_squared: bool, with_u_bound: bool):
         b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
-    unsafe_regions_lagrangian_degrees = [
-        clf_cbf.UnsafeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+    safety_sets_lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+            ),
+            within=None,
         )
     ]
     barrier_eps = np.array([0.000])
@@ -100,7 +105,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         V_init,
         b_init,
         compatible_lagrangian_degrees,
-        unsafe_regions_lagrangian_degrees,
+        safety_sets_lagrangian_degrees,
         kappa_V,
         kappa_b,
         barrier_eps,
@@ -129,7 +134,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
     )
 
     # Check the CLF/CBF with a positive kappa.
-    compatible_lagrangians, unsafe_regions_lagrangians = (
+    compatible_lagrangians, safety_sets_lagrangians = (
         compatible.search_lagrangians_given_clf_cbf(
             V,
             b,
@@ -137,12 +142,12 @@ def main(use_y_squared: bool, with_u_bound: bool):
             kappa_b=np.array([1e-4]),
             barrier_eps=barrier_eps,
             compatible_lagrangian_degrees=compatible_lagrangian_degrees,
-            unsafe_regions_lagrangian_degrees=unsafe_regions_lagrangian_degrees,
+            safety_set_lagrangian_degrees=safety_sets_lagrangian_degrees,
             solver_options=solver_options,
         )
     )
     assert compatible_lagrangians is not None
-    assert unsafe_regions_lagrangians is not None
+    assert safety_sets_lagrangians is not None
 
 
 if __name__ == "__main__":

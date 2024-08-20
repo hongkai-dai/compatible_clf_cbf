@@ -56,12 +56,14 @@ def search_clf_cbf(
     kappa_b = np.array([kappa_V])
 
     # Ground as the unsafe region.
-    unsafe_regions = [np.array([sym.Polynomial(x[1] + 0.5)])]
+    safety_sets = [
+        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[1] + 0.5)]), within=None)
+    ]
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        unsafe_regions=unsafe_regions,
+        safety_sets=safety_sets,
         Au=Au,
         bu=bu,
         with_clf=True,
@@ -87,9 +89,12 @@ def search_clf_cbf(
     )
     barrier_eps = np.array([0.0])
 
-    unsafe_regions_lagrangian_degrees = [
-        clf_cbf.UnsafeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[2], state_eq_constraints=None
+    safety_sets_lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=0, unsafe_region=[2], state_eq_constraints=None
+            ),
+            within=None,
         )
     ]
     solver_options = solvers.SolverOptions()
@@ -130,7 +135,7 @@ def search_clf_cbf(
         V_init,
         b_init,
         lagrangian_degrees,
-        unsafe_regions_lagrangian_degrees,
+        safety_sets_lagrangian_degrees,
         kappa_V,
         kappa_b,
         barrier_eps,

@@ -22,11 +22,14 @@ def main(with_u_bound: bool):
     else:
         Au = None
         bu = None
+    safety_sets = [
+        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[0] + 5)]), within=None)
+    ]
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        unsafe_regions=[np.array([sym.Polynomial(x[0] + 5)])],
+        safety_sets=safety_sets,
         Au=Au,
         bu=bu,
         with_clf=True,
@@ -46,16 +49,19 @@ def main(with_u_bound: bool):
         b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=None,
     )
-    unsafe_region_lagrangian_degrees = [
-        clf_cbf.UnsafeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[0], state_eq_constraints=None
+    safety_sets_lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=0, unsafe_region=[0], state_eq_constraints=None
+            ),
+            within=None,
         )
     ]
     x_equilibrium = np.array([0.0, 0.0])
 
     clf_degree = 2
     cbf_degrees = [2]
-    max_iter = 10
+    max_iter = 4
 
     compatible_states_options = clf_cbf.CompatibleStatesOptions(
         candidate_compatible_states=np.array([[1, 1], [-1, 1]]),
@@ -73,7 +79,7 @@ def main(with_u_bound: bool):
         V_init,
         b_init,
         compatible_lagrangian_degrees,
-        unsafe_region_lagrangian_degrees,
+        safety_sets_lagrangian_degrees,
         kappa_V,
         kappa_b,
         barrier_eps,

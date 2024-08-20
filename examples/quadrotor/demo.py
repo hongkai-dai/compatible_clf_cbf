@@ -1,5 +1,5 @@
 """
-Certify the compatible CLF/CBF with input limits.
+Certify the compatible CLF/CBF without input limits.
 This uses the polynomial dynamics of the quadrotor (with quaternion as part of
 the state), and equality constraint to enforce the unit-length constraint on the
 quaternion.
@@ -31,13 +31,15 @@ def main(use_y_squared: bool, with_u_bound: bool):
         Au, bu = None, None
 
     # Ground as the unsafe region.
-    unsafe_regions = [np.array([sym.Polynomial(x[6] + 0.5)])]
+    safety_sets = [
+        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[6] + 0.5)]), within=None)
+    ]
     state_eq_constraints = quadrotor.equality_constraint(x)
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        unsafe_regions=unsafe_regions,
+        safety_sets=safety_sets,
         Au=Au,
         bu=bu,
         with_clf=True,
@@ -99,9 +101,12 @@ def main(use_y_squared: bool, with_u_bound: bool):
         b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
-    unsafe_regions_lagrangian_degrees = [
-        clf_cbf.UnsafeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+    safety_sets_lagrangian_degrees = [
+        clf_cbf.SafetySetLagrangianDegrees(
+            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+            ),
+            within=None,
         )
     ]
     barrier_eps = np.array([0.000])
@@ -203,7 +208,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
             V,
             b,
             compatible_lagrangian_degrees,
-            unsafe_regions_lagrangian_degrees,
+            safety_sets_lagrangian_degrees,
             kappa_V,
             kappa_b,
             barrier_eps,

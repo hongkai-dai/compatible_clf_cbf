@@ -146,7 +146,7 @@ class TestClfCbf(object):
         cls.nx = 3
         cls.nu = 2
         cls.x = sym.MakeVectorContinuousVariable(cls.nx, "x")
-        # The dynamics and unsafe regions are arbitrary, they are only used to
+        # The dynamics and safety sets are arbitrary, they are only used to
         # test the functionality of the code.
         cls.f = np.array(
             [
@@ -162,9 +162,16 @@ class TestClfCbf(object):
                 [sym.Polynomial(cls.x[0] * cls.x[2]), sym.Polynomial(cls.x[1])],
             ]
         )
-        cls.unsafe_regions = [
-            np.array([sym.Polynomial(cls.x[0] + 1)]),
-            np.array([sym.Polynomial(1 - cls.x[1]), sym.Polynomial(1 - cls.x[0])]),
+        cls.safety_sets = [
+            mut.SafetySet(
+                exclude=np.array([sym.Polynomial(cls.x[0] + 1)]), within=None
+            ),
+            mut.SafetySet(
+                exclude=np.array(
+                    [sym.Polynomial(1 - cls.x[1]), sym.Polynomial(1 - cls.x[0])]
+                ),
+                within=None,
+            ),
         ]
 
     def linearize(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -188,7 +195,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -203,7 +210,7 @@ class TestClfCbf(object):
             for y_squared_poly_i, y_i in zip(cls.y_squared_poly.flat, cls.y.flat):
                 assert y_squared_poly_i.EqualTo(sym.Polynomial(y_i**2))
 
-        assert dut.y.shape == (len(self.unsafe_regions) + 1,)
+        assert dut.y.shape == (len(self.safety_sets) + 1,)
         check_members(dut)
 
         # Now construct with with_clf=False
@@ -211,13 +218,13 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=False,
             use_y_squared=True,
         )
-        assert dut.y.shape == (len(self.unsafe_regions),)
+        assert dut.y.shape == (len(self.safety_sets),)
         check_members(dut)
 
         # Now construct with Au and bu
@@ -225,7 +232,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=np.array([[-3, -2], [1.0, 4.0], [0.0, 3.0]]),
             bu=np.array([4, 5.0, 6.0]),
             with_clf=False,
@@ -235,7 +242,7 @@ class TestClfCbf(object):
         assert dut.Au.shape == (3, self.nu)
         assert dut.bu is not None
         assert dut.bu.shape == (3,)
-        assert dut.y.shape == (len(self.unsafe_regions) + dut.Au.shape[0],)
+        assert dut.y.shape == (len(self.safety_sets) + dut.Au.shape[0],)
         check_members(dut)
 
         # Now construct with Au, bu and with_clf=True
@@ -243,7 +250,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=np.array([[-3, -2], [1, 4], [3, -1.0]]),
             bu=np.array([4, 5.0, 6.0]),
             with_clf=True,
@@ -253,7 +260,7 @@ class TestClfCbf(object):
         assert dut.Au.shape == (3, self.nu)
         assert dut.bu is not None
         assert dut.bu.shape == (3,)
-        assert dut.y.shape == (len(self.unsafe_regions) + 1 + dut.Au.shape[0],)
+        assert dut.y.shape == (len(self.safety_sets) + 1 + dut.Au.shape[0],)
         check_members(dut)
 
     def test_calc_xi_Lambda_w_clf(self):
@@ -264,7 +271,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -282,8 +289,8 @@ class TestClfCbf(object):
         kappa_V = 0.01
         kappa_b = np.array([0.02, 0.03])
         xi, lambda_mat = dut._calc_xi_Lambda(V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b)
-        assert xi.shape == (1 + len(self.unsafe_regions),)
-        assert lambda_mat.shape == (1 + len(self.unsafe_regions), dut.nu)
+        assert xi.shape == (1 + len(self.safety_sets),)
+        assert lambda_mat.shape == (1 + len(self.safety_sets), dut.nu)
         dbdx = np.empty((2, 3), dtype=object)
         dbdx[0] = b[0].Jacobian(self.x)
         dbdx[1] = b[1].Jacobian(self.x)
@@ -307,7 +314,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=False,
@@ -323,8 +330,8 @@ class TestClfCbf(object):
         kappa_V = None
         kappa_b = np.array([0.02, 0.03])
         xi, lambda_mat = dut._calc_xi_Lambda(V=V, b=b, kappa_V=kappa_V, kappa_b=kappa_b)
-        assert xi.shape == (len(self.unsafe_regions),)
-        assert lambda_mat.shape == (len(self.unsafe_regions), dut.nu)
+        assert xi.shape == (len(self.safety_sets),)
+        assert lambda_mat.shape == (len(self.safety_sets), dut.nu)
         dbdx = np.empty((2, 3), dtype=object)
         dbdx[0] = b[0].Jacobian(self.x)
         dbdx[1] = b[1].Jacobian(self.x)
@@ -345,7 +352,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=np.array([[-3, 2], [1, 4], [3, 8.0]]),
             bu=np.array([3.0, 5.0, 10.0]),
             with_clf=True,
@@ -409,7 +416,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -433,7 +440,7 @@ class TestClfCbf(object):
             rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=4, y=2),
             b_plus_eps=[
                 mut.CompatibleLagrangianDegrees.Degree(x=4, y=2)
-                for _ in range(len(self.unsafe_regions))
+                for _ in range(len(self.safety_sets))
             ],
             state_eq_constraints=None,
         )
@@ -451,7 +458,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -480,7 +487,7 @@ class TestClfCbf(object):
         b_plus_eps_lagrangian = np.array(
             [
                 prog.NewSosPolynomial(dut.xy_set, degree=2)[0]
-                for _ in range(len(dut.unsafe_regions))
+                for _ in range(len(dut.safety_sets))
             ]
         )
         lagrangians = mut.CompatibleLagrangians(
@@ -515,15 +522,15 @@ class TestClfCbf(object):
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, tolerance=1e-5)
 
-    def test_add_barrier_safe_constraint(self):
+    def test_add_barrier_exclude_constraint(self):
         """
-        Test _add_barrier_safe_constraint
+        Test _add_barrier_exclude_constraint
         """
         dut = mut.CompatibleClfCbf(
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -533,28 +540,28 @@ class TestClfCbf(object):
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x)
 
-        unsafe_region_index = 0
+        safety_set_index = 0
         b = sym.Polynomial(1 + 2 * self.x[0] * self.x[1])
-        lagrangians = mut.UnsafeRegionLagrangians(
+        lagrangians = mut.ExcludeRegionLagrangians(
             cbf=sym.Polynomial(1 + self.x[0]),
             unsafe_region=np.array([sym.Polynomial(2 + self.x[0])]),
             state_eq_constraints=None,
         )
 
-        poly = dut._add_barrier_safe_constraint(
-            prog, unsafe_region_index, b, lagrangians
+        poly = dut._add_barrier_exclude_constraint(
+            prog, safety_set_index, b, lagrangians
         )
         poly_expected = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
-            dut.unsafe_regions[unsafe_region_index]
+            dut.safety_sets[safety_set_index].exclude
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
 
-    def test_certify_cbf_unsafe_region(self):
+    def test_certify_cbf_exclude(self):
         dut = mut.CompatibleClfCbf(
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -562,17 +569,17 @@ class TestClfCbf(object):
         )
 
         cbf = sym.Polynomial(1 - self.x.dot(self.x))
-        unsafe_region_lagrangian_degrees = mut.UnsafeRegionLagrangianDegrees(
+        exclude_region_lagrangian_degrees = mut.ExcludeRegionLagrangianDegrees(
             cbf=2, unsafe_region=[2], state_eq_constraints=None
         )
-        lagrangians = dut.certify_cbf_unsafe_region(
+        lagrangians = dut.certify_cbf_exclude(
             0,
             cbf,
-            unsafe_region_lagrangian_degrees,
+            exclude_region_lagrangian_degrees,
         )
         assert lagrangians is not None
         assert utils.is_sos(lagrangians.cbf)
-        for i in range(dut.unsafe_regions[0].size):
+        for i in range(dut.safety_sets[0].exclude.size):
             assert utils.is_sos(lagrangians.unsafe_region[i])
 
     def test_find_max_inner_ellipsoid(self):
@@ -580,7 +587,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -638,7 +645,7 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -684,7 +691,11 @@ class TestClfCbfToy:
         )
         cls.g = np.array([[sym.Polynomial(1)], [sym.Polynomial(-1)]])
 
-        cls.unsafe_regions = [np.array([sym.Polynomial(cls.x[0] + 10)])]
+        cls.safety_sets = [
+            mut.SafetySet(
+                exclude=np.array([sym.Polynomial(cls.x[0] + 10)]), within=None
+            )
+        ]
 
         cls.kappa_V = 0.001
         cls.kappa_b = np.array([cls.kappa_V])
@@ -693,7 +704,7 @@ class TestClfCbfToy:
     def check_unsafe_region_by_sample(self, b: np.ndarray, x_samples):
         # Sample many points, make sure that {x | b[i] >= 0} doesn't intersect
         # with the i'th unsafe region.
-        for i, unsafe_region in enumerate(self.unsafe_regions):
+        for i, safety_set in enumerate(self.safety_sets):
             unsafe_flag = np.all(
                 np.concatenate(
                     [
@@ -701,7 +712,7 @@ class TestClfCbfToy:
                             unsafe_region_j.EvaluateIndeterminates(self.x, x_samples.T)
                             <= 0
                         ).reshape((-1, 1))
-                        for unsafe_region_j in unsafe_region
+                        for unsafe_region_j in safety_set.exclude
                     ],
                     axis=1,
                 ),
@@ -716,8 +727,8 @@ class TestClfCbfToy:
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
         mut.CompatibleLagrangianDegrees,
-        List[mut.UnsafeRegionLagrangians],
-        List[mut.UnsafeRegionLagrangianDegrees],
+        List[mut.SafetySetLagrangians],
+        List[mut.SafetySetLagrangianDegrees],
         sym.Polynomial,
         np.ndarray,
     ]:
@@ -726,7 +737,7 @@ class TestClfCbfToy:
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -762,26 +773,30 @@ class TestClfCbfToy:
         compatible_lagrangians_result = compatible_lagrangians.get_result(
             compatible_result, coefficient_tol=1e-5
         )
-        unsafe_region_lagrangian_degrees = mut.UnsafeRegionLagrangianDegrees(
+        exclude_region_lagrangian_degrees = mut.ExcludeRegionLagrangianDegrees(
             cbf=0, unsafe_region=[0], state_eq_constraints=None
         )
-
-        unsafe_lagrangians = [
-            dut.certify_cbf_unsafe_region(
-                unsafe_region_index=0,
-                cbf=b_init[0],
-                lagrangian_degrees=unsafe_region_lagrangian_degrees,
-                solver_options=None,
+        safety_sets_lagrangian_degrees = [
+            mut.SafetySetLagrangianDegrees(
+                exclude=exclude_region_lagrangian_degrees, within=None
             )
         ]
-        assert unsafe_lagrangians is not None
+
+        safety_sets_lagrangians = dut.certify_cbf_safety_set(
+            safety_set_index=0,
+            cbf=b_init[0],
+            lagrangian_degrees=safety_sets_lagrangian_degrees[0],
+            solver_options=None,
+        )
+
+        assert safety_sets_lagrangians is not None
 
         return (
             dut,
             compatible_lagrangians_result,
             lagrangian_degrees,
-            unsafe_lagrangians,
-            [unsafe_region_lagrangian_degrees],
+            [safety_sets_lagrangians],
+            safety_sets_lagrangian_degrees,
             V_init,
             b_init,
         )
@@ -791,16 +806,16 @@ class TestClfCbfToy:
             dut,
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             _,
             _,
         ) = self.search_lagrangians()
         prog, V, b = dut._construct_search_clf_cbf_program(
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=np.array([0, 0.0]),
@@ -835,8 +850,8 @@ class TestClfCbfToy:
             dut,
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             V,
             b,
         ) = self.search_lagrangians()
@@ -865,8 +880,8 @@ class TestClfCbfToy:
         V_new, b_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=x_equilibrium,
@@ -892,8 +907,8 @@ class TestClfCbfToy:
             dut,
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             V,
             b,
         ) = self.search_lagrangians()
@@ -908,8 +923,8 @@ class TestClfCbfToy:
         V_new, b_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=np.array([0.0, 0.0]),
@@ -944,8 +959,8 @@ class TestClfCbfToy:
             dut,
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             V_init,
             b_init,
         ) = self.search_lagrangians()
@@ -977,8 +992,8 @@ class TestClfCbfToy:
         V, b = dut.binary_search_clf_cbf(
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=x_equilibrium,
@@ -1047,8 +1062,11 @@ class TestClfCbfWStateEqConstraints:
                 [sym.Polynomial(-1)],
             ]
         )
-        cls.unsafe_regions = [
-            np.array([sym.Polynomial(cls.x[0] + cls.x[1] + cls.x[2] + 3)])
+        cls.safety_sets = [
+            mut.SafetySet(
+                exclude=np.array([sym.Polynomial(cls.x[0] + cls.x[1] + cls.x[2] + 3)]),
+                within=None,
+            )
         ]
         cls.state_eq_constraints = np.array(
             [sym.Polynomial(cls.x[0] ** 2 + cls.x[1] ** 2 + 2 * cls.x[1])]
@@ -1061,8 +1079,8 @@ class TestClfCbfWStateEqConstraints:
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
         mut.CompatibleLagrangianDegrees,
-        List[mut.UnsafeRegionLagrangians],
-        List[mut.UnsafeRegionLagrangianDegrees],
+        List[mut.SafetySetLagrangians],
+        List[mut.SafetySetLagrangianDegrees],
         sym.Polynomial,
         np.ndarray,
     ]:
@@ -1071,7 +1089,7 @@ class TestClfCbfWStateEqConstraints:
             f=self.f,
             g=self.g,
             x=self.x,
-            unsafe_regions=self.unsafe_regions,
+            safety_sets=self.safety_sets,
             Au=None,
             bu=None,
             with_clf=True,
@@ -1111,24 +1129,31 @@ class TestClfCbfWStateEqConstraints:
             compatible_result, coefficient_tol=None
         )
 
-        unsafe_region_lagrangian_degrees = mut.UnsafeRegionLagrangianDegrees(
+        exclude_region_lagrangian_degrees = mut.ExcludeRegionLagrangianDegrees(
             cbf=0, unsafe_region=[0], state_eq_constraints=[0]
         )
+        safety_sets_lagrangian_degrees = [
+            mut.SafetySetLagrangianDegrees(
+                exclude=exclude_region_lagrangian_degrees, within=None
+            )
+        ]
 
-        unsafe_lagrangians = [
-            dut.certify_cbf_unsafe_region(
-                unsafe_region_index=0,
+        safety_sets_lagrangians = [
+            dut.certify_cbf_safety_set(
+                safety_set_index=0,
                 cbf=b_init[0],
-                lagrangian_degrees=unsafe_region_lagrangian_degrees,
+                lagrangian_degrees=safety_sets_lagrangian_degrees[0],
                 solver_options=None,
             )
         ]
-        assert unsafe_lagrangians is not None
+        assert safety_sets_lagrangians[0] is not None
         if check_result:
             assert utils.is_sos(
-                -(1 + unsafe_lagrangians[0].cbf) * b_init[0]
-                + unsafe_lagrangians[0].unsafe_region.dot(self.unsafe_regions[0])
-                - unsafe_lagrangians[0].state_eq_constraints.dot(
+                -(1 + safety_sets_lagrangians[0].exclude.cbf) * b_init[0]
+                + safety_sets_lagrangians[0].exclude.unsafe_region.dot(
+                    self.safety_sets[0].exclude
+                )
+                - safety_sets_lagrangians[0].exclude.state_eq_constraints.dot(
                     self.state_eq_constraints
                 )
             )
@@ -1136,8 +1161,8 @@ class TestClfCbfWStateEqConstraints:
             dut,
             compatible_lagrangians_result,
             lagrangian_degrees,
-            unsafe_lagrangians,
-            [unsafe_region_lagrangian_degrees],
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             V_init,
             b_init,
         )
@@ -1150,8 +1175,8 @@ class TestClfCbfWStateEqConstraints:
             dut,
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             V_init,
             b_init,
         ) = self.search_lagrangians(check_result=False)
@@ -1180,8 +1205,8 @@ class TestClfCbfWStateEqConstraints:
         V, b, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
             compatible_lagrangian_degrees,
-            unsafe_lagrangians,
-            unsafe_region_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
             clf_degree=2,
             cbf_degrees=[2],
             x_equilibrium=np.array([0.0, 0.0, 0.0]),
