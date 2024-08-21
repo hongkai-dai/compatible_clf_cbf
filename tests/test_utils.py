@@ -197,7 +197,6 @@ def test_new_free_polynomial_pass_origin():
 
 
 def test_serialize_polynomial():
-
     def test(p, x_set, expected):
         ret = mut.serialize_polynomial(p, x_set)
         assert len(ret) == len(expected)

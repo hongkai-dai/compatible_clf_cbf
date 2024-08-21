@@ -134,17 +134,18 @@ def main(use_y_squared: bool, with_u_bound: bool):
     )
 
     # Check the CLF/CBF with a positive kappa.
-    compatible_lagrangians, safety_sets_lagrangians = (
-        compatible.search_lagrangians_given_clf_cbf(
-            V,
-            b,
-            kappa_V=1e-4,
-            kappa_b=np.array([1e-4]),
-            barrier_eps=barrier_eps,
-            compatible_lagrangian_degrees=compatible_lagrangian_degrees,
-            safety_set_lagrangian_degrees=safety_sets_lagrangian_degrees,
-            solver_options=solver_options,
-        )
+    (
+        compatible_lagrangians,
+        safety_sets_lagrangians,
+    ) = compatible.search_lagrangians_given_clf_cbf(
+        V,
+        b,
+        kappa_V=1e-4,
+        kappa_b=np.array([1e-4]),
+        barrier_eps=barrier_eps,
+        compatible_lagrangian_degrees=compatible_lagrangian_degrees,
+        safety_set_lagrangian_degrees=safety_sets_lagrangian_degrees,
+        solver_options=solver_options,
     )
     assert compatible_lagrangians is not None
     assert safety_sets_lagrangians is not None

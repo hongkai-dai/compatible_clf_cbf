@@ -446,7 +446,6 @@ class SafetySetLagrangianDegrees:
             Tuple[Optional[sym.Polynomial], Optional[List[sym.Polynomial]]]
         ] = None,
     ) -> SafetySetLagrangians:
-
         exclude = (
             None
             if self.exclude is None
