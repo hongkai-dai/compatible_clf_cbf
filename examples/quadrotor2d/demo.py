@@ -90,14 +90,15 @@ def main(use_y_squared: bool, with_u_bound: bool):
             [
                 [0, 0, 0, 0, 0, 0, 0],
                 [0, -0.3, 0, 0, 0, 0, 0],
-                [0.4, -0.3, 0, 0, 0, 0, 0],
-                [-0.4, -0.3, 0, 0, 0, 0, 0],
+                [0.5, -0.3, 0, 0, 0, 0, 0],
+                [-0.5, -0.3, 0, 0, 0, 0, 0],
             ]
         ),
         anchor_states=np.zeros((1, 7)),
         b_anchor_bounds=[(np.array([0.0]), np.array([1]))],
         weight_V=1,
         weight_b=np.array([1]),
+        b_margins=np.array([0.02]),
     )
 
     max_iter = 5

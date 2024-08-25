@@ -6,19 +6,36 @@ quaternion.
 """
 
 import os
+from typing import Tuple
 
 import numpy as np
+
+from pydrake.geometry import (
+    Box,
+    MeshcatVisualizer,
+    MeshcatVisualizerParams,
+    Role,
+    Rgba,
+    StartMeshcat,
+    SceneGraph,
+)
+import pydrake.math
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
+import pydrake.systems.analysis
+from pydrake.systems.framework import Diagram, DiagramBuilder
+from pydrake.systems.primitives import LogVectorOutput, VectorLogSink
+
 
 import compatible_clf_cbf.clf as clf
 from compatible_clf_cbf import clf_cbf
-from examples.quadrotor.plant import QuadrotorPolyPlant
+from examples.quadrotor.plant import QuadrotorPolyPlant, QuadrotorPolyGeometry
 import examples.quadrotor.demo_clf
 from compatible_clf_cbf.utils import BackoffScale
+import compatible_clf_cbf.controller
 
 
-def main(use_y_squared: bool, with_u_bound: bool):
+def search(use_y_squared: bool, with_u_bound: bool):
     x = sym.MakeVectorContinuousVariable(13, "x")
     quadrotor = QuadrotorPolyPlant()
     f, g = quadrotor.affine_dynamics(x)
@@ -67,19 +84,19 @@ def main(use_y_squared: bool, with_u_bound: bool):
 
     b_init = np.array([1 - V_init])
 
-    load_clf_cbf = True
+    load_clf_cbf = False
     if load_clf_cbf:
         data = clf_cbf.load_clf_cbf(
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                "../../data/quadrotor_clf_cbf3.pkl",
+                "../../data/quadrotor_clf_cbf7.pkl",
             ),
             x_set,
         )
         V_init = data["V"]
         b_init = data["b"]
-    kappa_V_sequences = [0, 1e-3, 1e-3, 1e-3, 1e-3]
-    kappa_b_sequences = [np.array([kappa_V]) for kappa_V in kappa_V_sequences]
+    kappa_V_sequences = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.2]
+    kappa_b_sequences = [np.array([0.2]) for _ in range(len(kappa_V_sequences))]
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[
@@ -145,16 +162,15 @@ def main(use_y_squared: bool, with_u_bound: bool):
     candidate_compatible_states_sequences[-1][5, 4] = -0.5
     candidate_compatible_states_sequences[-1][5, 6] = -0.35
 
-    candidate_compatible_states_sequences.append(np.zeros((6, 13)))
+    candidate_compatible_states_sequences.append(np.zeros((5, 13)))
+    candidate_compatible_states_sequences[-1][1, 5] = -0.6
     candidate_compatible_states_sequences[-1][1, 6] = -0.35
-    candidate_compatible_states_sequences[-1][2, 5] = -0.6
+    candidate_compatible_states_sequences[-1][2, 5] = 0.6
     candidate_compatible_states_sequences[-1][2, 6] = -0.35
-    candidate_compatible_states_sequences[-1][3, 5] = 0.6
+    candidate_compatible_states_sequences[-1][3, 4] = 0.6
     candidate_compatible_states_sequences[-1][3, 6] = -0.35
-    candidate_compatible_states_sequences[-1][4, 4] = 0.6
+    candidate_compatible_states_sequences[-1][4, 4] = -0.6
     candidate_compatible_states_sequences[-1][4, 6] = -0.35
-    candidate_compatible_states_sequences[-1][5, 4] = -0.6
-    candidate_compatible_states_sequences[-1][5, 6] = -0.35
 
     candidate_compatible_states_sequences.append(np.zeros((5, 13)))
     candidate_compatible_states_sequences[-1][1, 5] = -0.7
@@ -166,31 +182,79 @@ def main(use_y_squared: bool, with_u_bound: bool):
     candidate_compatible_states_sequences[-1][4, 4] = -0.7
     candidate_compatible_states_sequences[-1][4, 6] = -0.35
 
+    candidate_compatible_states_sequences.append(np.zeros((5, 13)))
+    candidate_compatible_states_sequences[-1][1, 5] = -0.8
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = 0.8
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 4] = 0.8
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = -0.8
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
+
+    candidate_compatible_states_sequences.append(np.zeros((5, 13)))
+    candidate_compatible_states_sequences[-1][1, 5] = -0.9
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = 0.9
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 4] = 0.9
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = -0.9
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
+
+    candidate_compatible_states_sequences.append(np.zeros((5, 13)))
+    candidate_compatible_states_sequences[-1][1, 5] = -1
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = 1
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 4] = 1
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = -1
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
     lagrangian_sos_types = [
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
-        solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
-        solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+    ]
+    V_margin_sequence = [
+        None,
+        None,
+        None,
+        None,
+        None,
+        0.01,
+        0.01,
+        0.01,
     ]
     b_margins_sequence = [
         None,
         None,
         np.array([0.05]),
-        np.array([0.05]),
+        np.array([0.04]),
         np.array([0.02]),
+        np.array([0.02]),
+        np.array([0.03]),
+        np.array([0.03]),
     ]
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
     V = V_init
     b = b_init
-    max_iter_sequence = [1, 2, 1, 2, 1]
+    max_iter_sequence = [1, 1, 1, 2, 1, 1, 2, 2]
     backoff_scale_sequence = [
         BackoffScale(rel=None, abs=0.2),
         BackoffScale(rel=None, abs=0.2),
         BackoffScale(rel=None, abs=0.2),
         BackoffScale(rel=None, abs=0.1),
         BackoffScale(rel=None, abs=0.2),
+        BackoffScale(rel=None, abs=0.1),
+        BackoffScale(rel=None, abs=0.1),
+        BackoffScale(rel=None, abs=0.15),
     ]
     for i in range(len(candidate_compatible_states_sequences)):
         compatible_states_options = clf_cbf.CompatibleStatesOptions(
@@ -199,6 +263,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
             b_anchor_bounds=[(np.array([0.6]), np.array([1.0]))],
             weight_V=1,
             weight_b=np.array([1]),
+            V_margin=V_margin_sequence[i],
             b_margins=b_margins_sequence[i],
         )
 
@@ -229,5 +294,115 @@ def main(use_y_squared: bool, with_u_bound: bool):
         clf_cbf.save_clf_cbf(V, b, x_set, kappa_V, kappa_b, pickle_path)
 
 
+def build_diagram() -> Tuple[
+    Diagram,
+    QuadrotorPolyPlant,
+    compatible_clf_cbf.controller.ClfCbfController,
+    VectorLogSink,
+    VectorLogSink,
+    VectorLogSink,
+    VectorLogSink,
+]:
+    builder = DiagramBuilder()
+    quadrotor = builder.AddSystem(QuadrotorPolyPlant())
+    scene_graph = builder.AddSystem(SceneGraph())
+    QuadrotorPolyGeometry.AddToBuilder(
+        builder, quadrotor.get_output_port(0), scene_graph
+    )
+
+    meshcat = StartMeshcat()
+
+    MeshcatVisualizer.AddToBuilder(
+        builder, scene_graph, meshcat, MeshcatVisualizerParams(role=Role.kPerception)
+    )
+    meshcat.SetObject("ground", Box(10, 10, 0.1), rgba=Rgba(0.5, 0.5, 0.5))
+    meshcat.SetTransform("ground", pydrake.math.RigidTransform(np.array([0, 0, -0.55])))
+
+    state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
+
+    poly_plant = QuadrotorPolyPlant()
+    x = sym.MakeVectorContinuousVariable(13, "x")
+    x_set = sym.Variables(x)
+
+    f, g = poly_plant.affine_dynamics(x)
+
+    pickle_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "../../data/quadrotor_clf_cbf7.pkl",
+    )
+    clf_cbf_data = clf_cbf.load_clf_cbf(pickle_path, x_set)
+    V = clf_cbf_data["V"]
+    b = clf_cbf_data["b"]
+    kappa_V = clf_cbf_data["kappa_V"]
+    kappa_b = clf_cbf_data["kappa_b"]
+
+    Qu = np.eye(4)
+    clf_cbf_controller = builder.AddSystem(
+        compatible_clf_cbf.controller.ClfCbfController(
+            f,
+            g,
+            V,
+            b,
+            x,
+            kappa_V,
+            kappa_b,
+            Qu,
+            Au=None,
+            bu=None,
+            solver_id=None,
+            solver_options=None,
+        )
+    )
+    builder.Connect(
+        clf_cbf_controller.action_output_port(), quadrotor.get_input_port(0)
+    )
+    builder.Connect(quadrotor.get_output_port(0), clf_cbf_controller.get_input_port(0))
+
+    action_logger = LogVectorOutput(clf_cbf_controller.action_output_port(), builder)
+
+    clf_logger = LogVectorOutput(clf_cbf_controller.clf_output_port(), builder)
+
+    cbf_logger = LogVectorOutput(clf_cbf_controller.cbf_output_port(), builder)
+    diagram = builder.Build()
+    return (
+        diagram,
+        quadrotor,
+        clf_cbf_controller,
+        state_logger,
+        action_logger,
+        clf_logger,
+        cbf_logger,
+    )
+
+
+def simulate(x0: np.ndarray, duration: float):
+    (
+        diagram,
+        quadrotor,
+        clf_cbf_controller,
+        state_logger,
+        action_logger,
+        clf_logger,
+        cbf_logger,
+    ) = build_diagram()
+    simulator = pydrake.systems.analysis.Simulator(diagram)
+    simulator.get_mutable_context().SetContinuousState(x0)
+    simulator.AdvanceTo(duration)
+
+    state_data = state_logger.FindLog(simulator.get_context()).data()
+    action_data = action_logger.FindLog(simulator.get_context()).data()
+    clf_data = clf_logger.FindLog(simulator.get_context()).data()
+    cbf_data = cbf_logger.FindLog(simulator.get_context()).data()
+    return state_data, action_data, clf_data, cbf_data
+
+
+def main():
+    search(use_y_squared=True, with_u_bound=False)
+    x0 = np.zeros((13,))
+    x0[4:7] = np.array([0.7, 0, -0.3])
+    state_data, action_data, clf_data, cbf_data = simulate(x0, duration=20)
+
+
 if __name__ == "__main__":
-    main(use_y_squared=True, with_u_bound=False)
+    with solvers.MosekSolver.AcquireLicense():
+        main()

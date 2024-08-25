@@ -634,8 +634,9 @@ class ClfConstraint:
 
     def add_to_prog(
         self, prog: solvers.MathematicalProgram, x_val: np.ndarray, u: np.ndarray
-    ):
+    ) -> solvers.Binding[solvers.LinearConstraint]:
         env = {self.x[i]: x_val[i] for i in range(x_val.size)}
         lhs_coeff = np.array([p.Evaluate(env) for p in self.lhs_coeff])
         rhs = self.rhs.Evaluate(env)
-        prog.AddLinearConstraint(lhs_coeff, -np.inf, rhs, u)
+        constraint = prog.AddLinearConstraint(lhs_coeff, -np.inf, rhs, u)
+        return constraint

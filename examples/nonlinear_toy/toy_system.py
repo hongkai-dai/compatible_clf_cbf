@@ -43,8 +43,11 @@ def affine_trig_poly_state_constraints(x: np.ndarray) -> sym.Polynomial:
 
 def affine_trig_poly_dynamics(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    With the trigonometric state x̅ = [sinx₀, cosx₀−1, x₁], we can write the
-    dynamics as affine form f(x̅) + g(x̅)u
+    With the trigonometric state x̅ = [sinθ, cosθ−1, x₁], we can write the
+    dynamics
+    θdot = u
+    x₁_dot = -sinθ - u
+    as affine form f(x̅) + g(x̅)u
     """
     assert x.shape == (3,)
     if x.dtype == object:
