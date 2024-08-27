@@ -396,11 +396,28 @@ def simulate(x0: np.ndarray, duration: float):
     return state_data, action_data, clf_data, cbf_data
 
 
+def run_simulations():
+    x0_sequences = []
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[-1][4:7] = np.array([1, 0, -0.3])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[-1][4:7] = np.array([-1, 0, -0.3])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[-1][4:7] = np.array([0, 1, -0.3])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[-1][4:7] = np.array([0, -1, -0.3])
+    for i, x0 in enumerate(x0_sequences):
+        state_data, action_data, clf_data, cbf_data = simulate(x0, duration=40)
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            f"../../data/quadrotor_sim{i}.npz",
+        )
+        np.savez(path, state_data, action_data, clf_data, cbf_data)
+
+
 def main():
-    search(use_y_squared=True, with_u_bound=False)
-    x0 = np.zeros((13,))
-    x0[4:7] = np.array([0.7, 0, -0.3])
-    state_data, action_data, clf_data, cbf_data = simulate(x0, duration=20)
+    # search(use_y_squared=True, with_u_bound=False)
+    run_simulations()
 
 
 if __name__ == "__main__":

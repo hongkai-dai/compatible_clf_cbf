@@ -26,6 +26,39 @@ import compatible_clf_cbf.utils
 
 
 @dataclass
+class StableStatesOptions:
+    candidate_stable_states: np.ndarray
+    V_margin: Optional[float] = None
+
+    def add_cost(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: np.ndarray,
+        V: sym.Polynomial,
+    ) -> Tuple[solvers.Binding[solvers.LinearCost], np.ndarray]:
+        num_candidates = self.candidate_stable_states.shape[0]
+        # Add the slack variable representing ReLU(V(x_candidates)-1 + V_margin)
+        V_relu = prog.NewContinuousVariables(num_candidates, "V_relu")
+        prog.AddBoundingBoxConstraint(0, np.inf, V_relu)
+        # Now evaluate V(x_candidates) as A_v * V_decision_vars + b_v
+        A_v, V_decision_vars, b_v = V.EvaluateWithAffineCoefficients(
+            x, self.candidate_stable_states.T
+        )
+        # Now impose the constraint V_relu >= V(x_candidates) - 1 + V_margin as
+        # V_relu - A_v * V_decision_vars >= b_v -1 + V_margin
+        prog.AddLinearConstraint(
+            np.concatenate((-A_v, np.eye(num_candidates)), axis=1),
+            b_v - 1 + (0 if self.V_margin is None else self.V_margin),
+            np.full_like(b_v, np.inf),
+            np.concatenate((V_decision_vars, V_relu)),
+        )
+        cost_coeff = np.ones(num_candidates)
+        cost_vars = V_relu
+        cost = prog.AddLinearCost(cost_coeff, 0.0, cost_vars)
+        return cost, V_relu
+
+
+@dataclass
 class ClfWoInputLimitLagrangian:
     """
     The Lagrangians for proving the CLF condition for systems _without_ input limits.
@@ -81,34 +114,53 @@ class ClfWoInputLimitLagrangianDegrees:
         prog: solvers.MathematicalProgram,
         x_set: sym.Variables,
         x_equilibrium: np.ndarray,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        dVdx_times_f_lagrangian: Optional[sym.Polynomial] = None,
+        dVdx_times_g_lagrangian: Optional[np.ndarray] = None,
+        rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
     ) -> ClfWoInputLimitLagrangian:
         """
         Constructs the Lagrangians as SOS polynomials.
         """
-        dVdx_times_f, _ = new_sos_polynomial(prog, x_set, self.dVdx_times_f)
-        dVdx_times_g = np.array(
-            [prog.NewFreePolynomial(x_set, degree) for degree in self.dVdx_times_g]
-        )
+        if dVdx_times_f_lagrangian is None:
+            dVdx_times_f, _ = new_sos_polynomial(prog, x_set, self.dVdx_times_f)
+        else:
+            dVdx_times_f = dVdx_times_f_lagrangian
+
+        if dVdx_times_g_lagrangian is None:
+            dVdx_times_g = np.array(
+                [prog.NewFreePolynomial(x_set, degree) for degree in self.dVdx_times_g]
+            )
+        else:
+            dVdx_times_g = dVdx_times_g_lagrangian
         # We know that V(x_equilibrium) = 0 and dVdx at x_equilibrium is also
         # 0. Hence by
         # -(1+λ₀(x))*(∂V/∂x*f(x)+κ*V(x))−λ₁(x)*∂V/∂x*g(x)−λ₂(x)*(ρ−V(x))
         # being sos, we know that λ₂(x_equilibrium) = 0.
         # When x_equilibrium = 0, this means that λ₂(0) = 0. Since λ₂(x) is
         # sos, we know that its monomial basis doesn't contain 1.
-        rho_minus_V, _ = new_sos_polynomial(
-            prog, x_set, self.rho_minus_V, bool(np.all(x_equilibrium == 0))
-        )
-
-        state_eq_constraints = (
-            None
-            if self.state_eq_constraints is None
-            else np.array(
-                [
-                    prog.NewFreePolynomial(x_set, degree)
-                    for degree in self.state_eq_constraints
-                ]
+        if rho_minus_V_lagrangian is None:
+            rho_minus_V, _ = new_sos_polynomial(
+                prog, x_set, self.rho_minus_V, bool(np.all(x_equilibrium == 0))
             )
-        )
+        else:
+            rho_minus_V = rho_minus_V_lagrangian
+
+        if state_eq_constraints_lagrangian is None:
+            state_eq_constraints = (
+                None
+                if self.state_eq_constraints is None
+                else np.array(
+                    [
+                        prog.NewFreePolynomial(x_set, degree)
+                        for degree in self.state_eq_constraints
+                    ]
+                )
+            )
+        else:
+            state_eq_constraints = state_eq_constraints_lagrangian
         return ClfWoInputLimitLagrangian(
             dVdx_times_f, dVdx_times_g, rho_minus_V, state_eq_constraints
         )
@@ -163,21 +215,37 @@ class ClfWInputLimitLagrangianDegrees:
         prog: solvers.MathematicalProgram,
         x_set: sym.Variables,
         x_equilibrium: np.ndarray,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        V_minus_rho_lagrangian: Optional[sym.Polynomial] = None,
+        Vdot_lagrangian: Optional[np.ndarray] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
     ) -> ClfWInputLimitLagrangian:
-        V_minus_rho, _ = new_sos_polynomial(prog, x_set, self.V_minus_rho)
-        Vdot = np.array(
-            [new_sos_polynomial(prog, x_set, degree)[0] for degree in self.Vdot]
-        )
-        state_eq_constraints = (
-            None
-            if self.state_eq_constraints is None
-            else np.array(
-                [
-                    prog.NewFreePolynomial(x_set, degree)
-                    for degree in self.state_eq_constraints
-                ]
+        if V_minus_rho_lagrangian is None:
+            V_minus_rho, _ = new_sos_polynomial(prog, x_set, self.V_minus_rho)
+        else:
+            V_minus_rho = V_minus_rho_lagrangian
+
+        if Vdot_lagrangian is None:
+            Vdot = np.array(
+                [new_sos_polynomial(prog, x_set, degree)[0] for degree in self.Vdot]
             )
-        )
+        else:
+            Vdot = Vdot_lagrangian
+
+        if state_eq_constraints_lagrangian is None:
+            state_eq_constraints = (
+                None
+                if self.state_eq_constraints is None
+                else np.array(
+                    [
+                        prog.NewFreePolynomial(x_set, degree)
+                        for degree in self.state_eq_constraints
+                    ]
+                )
+            )
+        else:
+            state_eq_constraints = state_eq_constraints_lagrangian
         return ClfWInputLimitLagrangian(V_minus_rho, Vdot, state_eq_constraints)
 
 
@@ -276,11 +344,12 @@ class ControlLyapunov:
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Optional[Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian]]:
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x_set)
         lagrangians = lagrangian_degrees.to_lagrangians(
-            prog, self.x_set, self.x_equilibrium
+            prog, self.x_set, self.x_equilibrium, sos_type=lagrangian_sos_type
         )
         self._add_clf_condition(prog, V, lagrangians, rho, kappa)
         result = solve_with_id(prog, solver_id, solver_options)
@@ -291,12 +360,108 @@ class ControlLyapunov:
         )
         return lagrangians_result
 
-    def construct_search_clf_given_lagrangian(
+    def bilinear_alternation(
         self,
+        V_init: sym.Polynomial,
+        lagrangian_degrees: Union[
+            ClfWInputLimitLagrangianDegrees, ClfWoInputLimitLagrangianDegrees
+        ],
         kappa: float,
-        V_degree: int,
+        clf_degree: int,
+        x_equilibrium: np.ndarray,
+        max_iter: int,
+        stable_states_options: StableStatesOptions,
+        *,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        backoff_scale: Optional[compatible_clf_cbf.utils.BackoffScale] = None,
+        rho: float = 1,
+        lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> sym.Polynomial:
+        iteration = 0
+        V = V_init
+
+        def evaluate_stable_states(clf_fun, x_val):
+            V_candidates = clf_fun.EvaluateIndeterminates(self.x, x_val.T)
+            print(f"V(candidate_compatible_states)={V_candidates}")
+
+        for iteration in range(max_iter):
+            print(f"iteration {iteration}")
+
+            evaluate_stable_states(V, stable_states_options.candidate_stable_states)
+
+            # Search for Lagrangians
+            lagrangians = self.search_lagrangian_given_clf(
+                V=V,
+                rho=rho,
+                kappa=kappa,
+                lagrangian_degrees=lagrangian_degrees,
+                solver_id=solver_id,
+                solver_options=solver_options,
+                lagrangian_coefficient_tol=lagrangian_coefficient_tol,
+                lagrangian_sos_type=lagrangian_sos_type,
+            )
+            assert lagrangians is not None
+            V, result = self.search_clf_given_lagrangian(
+                lagrangians,
+                lagrangian_degrees,
+                clf_degree,
+                x_equilibrium,
+                kappa,
+                stable_states_options=stable_states_options,
+                solver_id=solver_id,
+                solver_options=solver_options,
+                backoff_rel_scale=None if backoff_scale is None else backoff_scale.rel,
+                backoff_abs_scale=None if backoff_scale is None else backoff_scale.abs,
+                rho=rho,
+            )
+            assert V is not None
+        evaluate_stable_states(V, stable_states_options.candidate_stable_states)
+        return V
+
+    def search_clf_given_lagrangian(
+        self,
         lagrangians: Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian],
-    ) -> Tuple[solvers.MathematicalProgram, sym.Polynomial, sym.Variable]:
+        lagrangian_degrees: Union[
+            ClfWInputLimitLagrangianDegrees, ClfWoInputLimitLagrangianDegrees
+        ],
+        clf_degree: int,
+        x_equilibrium: np.ndarray,
+        kappa: float,
+        *,
+        stable_states_options: StableStatesOptions,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        backoff_rel_scale: Optional[float] = None,
+        backoff_abs_scale: Optional[float] = None,
+        rho: float = 1,
+    ) -> Tuple[Optional[sym.Polynomial], solvers.MathematicalProgramResult]:
+        prog, V = self._construct_search_clf_program(
+            lagrangians, lagrangian_degrees, clf_degree, x_equilibrium, kappa, rho=rho
+        )
+        stable_states_options.add_cost(prog, self.x, V)
+
+        result = solve_with_id(
+            prog, solver_id, solver_options, backoff_rel_scale, backoff_abs_scale
+        )
+        if result.is_success():
+            V_sol = result.GetSolution(V)
+        else:
+            V_sol = None
+        return V_sol, result
+
+    def _construct_search_clf_program(
+        self,
+        lagrangians: Union[ClfWInputLimitLagrangian, ClfWoInputLimitLagrangian],
+        lagrangian_degrees: Union[
+            ClfWInputLimitLagrangianDegrees, ClfWoInputLimitLagrangianDegrees
+        ],
+        clf_degree: int,
+        x_equilibrium: np.ndarray,
+        kappa: float,
+        rho: float = 1,
+    ) -> Tuple[solvers.MathematicalProgram, sym.Polynomial]:
         """
         Construct a mathematical program to search for V given Lagrangians.
 
@@ -308,17 +473,51 @@ class ControlLyapunov:
         Returns:
           prog: The optimization program.
           V: The CLF.
-          rho: The sub-level set is {x | V(x) <= rho}.
         """
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x_set)
-        V, _ = new_sos_polynomial(
-            prog, self.x_set, V_degree, bool(np.all(self.x_equilibrium == 0))
-        )
-        rho = prog.NewContinuousVariables(1, "rho")[0]
-        prog.AddBoundingBoxConstraint(0, np.inf, rho)
-        self._add_clf_condition(prog, V, lagrangians, rho, kappa)
-        return prog, V, rho
+        # V = new_sos_polynomial(
+        #    prog, self.x_set, clf_degree, zero_at_origin=np.all(x_equilibrium == 0)
+        # )[0]
+        V = prog.NewSosPolynomial(self.x_set, clf_degree)[0]
+        if True:  # np.any(x_equilibrium != 0):
+            # Add the constraint V(x*) = 0
+            (
+                V_x_equilibrium_coeff,
+                V_x_equilibrium_var,
+                V_x_equilibrium_constant,
+            ) = V.EvaluateWithAffineCoefficients(self.x, x_equilibrium.reshape((-1, 1)))
+            prog.AddLinearEqualityConstraint(
+                V_x_equilibrium_coeff.reshape((1, -1)),
+                -V_x_equilibrium_constant[0],
+                V_x_equilibrium_var,
+            )
+
+        # We can still search for the Lagrangian for the state equality constraints.
+        if isinstance(lagrangian_degrees, ClfWInputLimitLagrangianDegrees):
+            assert isinstance(lagrangians, ClfWInputLimitLagrangian)
+            lagrangians_new = lagrangian_degrees.to_lagrangians(
+                prog,
+                self.x_set,
+                x_equilibrium=x_equilibrium,
+                V_minus_rho_lagrangian=lagrangians.V_minus_rho,
+                Vdot_lagrangian=lagrangians.Vdot,
+                state_eq_constraints_lagrangian=None,
+            )
+        elif isinstance(lagrangian_degrees, ClfWoInputLimitLagrangianDegrees):
+            assert isinstance(lagrangians, ClfWoInputLimitLagrangian)
+            lagrangians_new = lagrangian_degrees.to_lagrangians(
+                prog,
+                self.x_set,
+                x_equilibrium=x_equilibrium,
+                dVdx_times_f_lagrangian=lagrangians.dVdx_times_f,
+                dVdx_times_g_lagrangian=lagrangians.dVdx_times_g,
+                rho_minus_V_lagrangian=lagrangians.rho_minus_V,
+                state_eq_constraints_lagrangian=None,
+            )
+
+        self._add_clf_condition(prog, V, lagrangians_new, rho, kappa)
+        return prog, V
 
     def _add_clf_condition(
         self,

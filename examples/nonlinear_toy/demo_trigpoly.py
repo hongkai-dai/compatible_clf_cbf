@@ -276,7 +276,7 @@ def visualize():
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.set_xlabel(r"$\theta$ (rad)", fontsize=16)
-    ax.set_ylabel(r"$\gamma$", fontsize=16)
+    ax.set_ylabel(r"$\dot{\theta} (rad/s)$", fontsize=16)
     ax.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
     ax.set_xticklabels(
         [r"$-\pi$", r"$-\frac{\pi}{2}$", r"0", r"$\frac{\pi}{2}$", r"$\pi$"]
