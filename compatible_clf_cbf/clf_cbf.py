@@ -1685,7 +1685,7 @@ class CompatibleClfCbf:
                 )
                 prog.AddLinearEqualityConstraint(
                     V_x_equilibrium_coeff.reshape((1, -1)),
-                    -V_x_equilibrium_coeff[0],
+                    -V_x_equilibrium_constant[0],
                     V_x_equilibrium_var,
                 )
         else:
