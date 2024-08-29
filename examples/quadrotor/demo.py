@@ -24,6 +24,7 @@ import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 import pydrake.systems.analysis
 from pydrake.systems.framework import Diagram, DiagramBuilder
+import pydrake.systems.framework
 from pydrake.systems.primitives import LogVectorOutput, VectorLogSink
 
 
@@ -84,18 +85,18 @@ def search(use_y_squared: bool, with_u_bound: bool):
 
     b_init = np.array([1 - V_init])
 
-    load_clf_cbf = False
+    load_clf_cbf = True
     if load_clf_cbf:
         data = clf_cbf.load_clf_cbf(
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                "../../data/quadrotor_clf_cbf7.pkl",
+                "../../data/quadrotor_clf_cbf8.pkl",
             ),
             x_set,
         )
         V_init = data["V"]
         b_init = data["b"]
-    kappa_V_sequences = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.2]
+    kappa_V_sequences = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.2, 0.25, 0.625]
     kappa_b_sequences = [np.array([0.2]) for _ in range(len(kappa_V_sequences))]
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
@@ -211,6 +212,30 @@ def search(use_y_squared: bool, with_u_bound: bool):
     candidate_compatible_states_sequences[-1][3, 6] = -0.35
     candidate_compatible_states_sequences[-1][4, 4] = -1
     candidate_compatible_states_sequences[-1][4, 6] = -0.35
+
+    candidate_compatible_states_sequences.append(np.zeros((7, 13)))
+    candidate_compatible_states_sequences[-1][1, 5] = -1
+    candidate_compatible_states_sequences[-1][1, 6] = -0.35
+    candidate_compatible_states_sequences[-1][2, 5] = 1
+    candidate_compatible_states_sequences[-1][2, 6] = -0.35
+    candidate_compatible_states_sequences[-1][3, 4] = 1
+    candidate_compatible_states_sequences[-1][3, 6] = -0.35
+    candidate_compatible_states_sequences[-1][4, 4] = -1
+    candidate_compatible_states_sequences[-1][4, 6] = -0.35
+    candidate_compatible_states_sequences[-1][5, 5] = -1
+    candidate_compatible_states_sequences[-1][5, :4] = np.array(
+        [np.cos(np.pi / 36) - 1, np.sin(np.pi / 36), 0, 0]
+    )
+    candidate_compatible_states_sequences[-1][6, 5] = 1
+    candidate_compatible_states_sequences[-1][6, :4] = np.array(
+        [np.cos(np.pi / 18) - 1, np.sin(np.pi / 18), 0, 0]
+    )
+
+    candidate_compatible_states_sequences.append(np.zeros((7, 13)))
+    candidate_compatible_states_sequences[-1] = candidate_compatible_states_sequences[
+        -2
+    ]
+
     lagrangian_sos_types = [
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
@@ -220,17 +245,10 @@ def search(use_y_squared: bool, with_u_bound: bool):
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
+        solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
     ]
-    V_margin_sequence = [
-        None,
-        None,
-        None,
-        None,
-        None,
-        0.01,
-        0.01,
-        0.01,
-    ]
+    V_margin_sequence = [None, None, None, None, None, 0.01, 0.01, 0.01, 0.05, 0.05]
     b_margins_sequence = [
         None,
         None,
@@ -240,12 +258,14 @@ def search(use_y_squared: bool, with_u_bound: bool):
         np.array([0.02]),
         np.array([0.03]),
         np.array([0.03]),
+        np.array([0.02]),
+        np.array([0.02]),
     ]
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
     V = V_init
     b = b_init
-    max_iter_sequence = [1, 1, 1, 2, 1, 1, 2, 2]
+    max_iter_sequence = [1, 1, 1, 2, 1, 1, 2, 2, 3, 1, 1]
     backoff_scale_sequence = [
         BackoffScale(rel=None, abs=0.2),
         BackoffScale(rel=None, abs=0.2),
@@ -255,8 +275,10 @@ def search(use_y_squared: bool, with_u_bound: bool):
         BackoffScale(rel=None, abs=0.1),
         BackoffScale(rel=None, abs=0.1),
         BackoffScale(rel=None, abs=0.15),
+        BackoffScale(rel=None, abs=0.1),
+        BackoffScale(rel=None, abs=0.1),
     ]
-    for i in range(len(candidate_compatible_states_sequences)):
+    for i in range(9, 10):  # len(candidate_compatible_states_sequences)):
         compatible_states_options = clf_cbf.CompatibleStatesOptions(
             candidate_compatible_states=candidate_compatible_states_sequences[i],
             anchor_states=np.zeros((1, 13)),
@@ -307,7 +329,7 @@ def build_diagram() -> Tuple[
     quadrotor = builder.AddSystem(QuadrotorPolyPlant())
     scene_graph = builder.AddSystem(SceneGraph())
     QuadrotorPolyGeometry.AddToBuilder(
-        builder, quadrotor.get_output_port(0), scene_graph
+        builder, quadrotor.get_output_port(0), "quadrotor", scene_graph
     )
 
     meshcat = StartMeshcat()
@@ -328,7 +350,7 @@ def build_diagram() -> Tuple[
 
     pickle_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "../../data/quadrotor_clf_cbf7.pkl",
+        "../../data/quadrotor_clf_cbf9.pkl",
     )
     clf_cbf_data = clf_cbf.load_clf_cbf(pickle_path, x_set)
     V = clf_cbf_data["V"]
@@ -387,37 +409,82 @@ def simulate(x0: np.ndarray, duration: float):
     ) = build_diagram()
     simulator = pydrake.systems.analysis.Simulator(diagram)
     simulator.get_mutable_context().SetContinuousState(x0)
+
+    def monitor(context):
+        quadrotor_context = quadrotor.GetMyContextFromRoot(context)
+        x_val = quadrotor.get_output_port(0).Eval(quadrotor_context)
+        if np.linalg.norm(x_val) < 1e-2:
+            return pydrake.systems.framework.EventStatus.ReachedTermination(
+                diagram, "reach_goal"
+            )
+        return pydrake.systems.framework.EventStatus.Succeeded()
+
+    simulator.set_monitor(monitor)
+    simulator_config = pydrake.systems.analysis.SimulatorConfig(
+        integration_scheme="runge_kutta3"
+    )
+    pydrake.systems.analysis.ApplySimulatorConfig(simulator_config, simulator)
     simulator.AdvanceTo(duration)
 
     state_data = state_logger.FindLog(simulator.get_context()).data()
     action_data = action_logger.FindLog(simulator.get_context()).data()
     clf_data = clf_logger.FindLog(simulator.get_context()).data()
     cbf_data = cbf_logger.FindLog(simulator.get_context()).data()
-    return state_data, action_data, clf_data, cbf_data
+    time_data = state_logger.FindLog(simulator.get_context()).sample_times()
+    return state_data, action_data, clf_data, cbf_data, time_data
 
 
 def run_simulations():
     x0_sequences = []
     x0_sequences.append(np.zeros((13,)))
-    x0_sequences[-1][4:7] = np.array([1, 0, -0.3])
+    x0_sequences[0][4:7] = np.array([1, 0, -0.3])
     x0_sequences.append(np.zeros((13,)))
-    x0_sequences[-1][4:7] = np.array([-1, 0, -0.3])
+    x0_sequences[1][4:7] = np.array([-1, 0, -0.3])
     x0_sequences.append(np.zeros((13,)))
-    x0_sequences[-1][4:7] = np.array([0, 1, -0.3])
+    x0_sequences[2][4:7] = np.array([0, 1, -0.3])
     x0_sequences.append(np.zeros((13,)))
-    x0_sequences[-1][4:7] = np.array([0, -1, -0.3])
-    for i, x0 in enumerate(x0_sequences):
-        state_data, action_data, clf_data, cbf_data = simulate(x0, duration=40)
+    x0_sequences[3][4:7] = np.array([0, -1, -0.3])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[4][4:7] = np.array([0.2, -0.8, 0.1])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[5][4:7] = np.array([0.1, -0.95, 0])
+    x0_sequences[5][:4] = np.array([np.cos(np.pi / 36) - 1, np.sin(np.pi / 36), 0, 0])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[6][4:7] = np.array([0.5, 0.7, 0.1])
+    x0_sequences[6][:4] = np.array([np.cos(np.pi / 20) - 1, np.sin(np.pi / 20), 0, 0])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[7][4:7] = np.array([-0.4, 0.75, -0.1])
+    x0_sequences[7][:4] = np.array([np.cos(np.pi / 15) - 1, np.sin(np.pi / 15), 0, 0])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[8][4:7] = np.array([-0.6, -0.55, -0.2])
+    x0_sequences[8][:4] = np.array([np.cos(np.pi / 18) - 1, 0, np.sin(np.pi / 18), 0])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[9][4:7] = np.array([0.6, -0.15, 0.05])
+    x0_sequences[9][:4] = np.array([np.cos(np.pi / 15) - 1, 0, np.sin(-np.pi / 15), 0])
+    x0_sequences.append(np.zeros((13,)))
+    x0_sequences[10][4:7] = np.array([-0.8, -0.05, -0.4])
+    x0_sequences[10][:4] = np.array([np.cos(np.pi / 30) - 1, 0, np.sin(np.pi / 30), 0])
+    for i in range(len(x0_sequences)):
+        state_data, action_data, clf_data, cbf_data, time_data = simulate(
+            x0_sequences[i], duration=60
+        )
         path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             f"../../data/quadrotor_sim{i}.npz",
         )
-        np.savez(path, state_data, action_data, clf_data, cbf_data)
+        np.savez(
+            path,
+            state_data=state_data,
+            action_data=action_data,
+            clf_data=clf_data,
+            cbf_data=cbf_data,
+            time_data=time_data,
+        )
 
 
 def main():
-    # search(use_y_squared=True, with_u_bound=False)
-    run_simulations()
+    search(use_y_squared=True, with_u_bound=False)
+    # run_simulations()
 
 
 if __name__ == "__main__":

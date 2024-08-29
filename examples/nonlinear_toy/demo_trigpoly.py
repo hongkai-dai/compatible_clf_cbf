@@ -276,7 +276,7 @@ def visualize():
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.set_xlabel(r"$\theta$ (rad)", fontsize=16)
-    ax.set_ylabel(r"$\dot{\theta} (rad/s)$", fontsize=16)
+    ax.set_ylabel(r"$\gamma$", fontsize=16)
     ax.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
     ax.set_xticklabels(
         [r"$-\pi$", r"$-\frac{\pi}{2}$", r"0", r"$\frac{\pi}{2}$", r"$\pi$"]
@@ -302,9 +302,10 @@ def visualize():
             h_V_init.legend_elements()[0][0],
             h_b_init.legend_elements()[0][0],
         ],
-        [r"$V(x)=1$", r"$b(x)=0$", r"$V_{init}(x)=1$", r"$b_{init}(x)=0$"],
+        [r"$V(x)=1$", r"$h(x)=0$", r"$V_{initial}(x)=1$", r"$h_{initial}(x)=0$"],
         prop={"size": 12},
     )
+    ax.set_title("Compatible CLF/CBF")
     fig.show()
     for fig_extension in (".png", ".pdf"):
         fig.savefig(

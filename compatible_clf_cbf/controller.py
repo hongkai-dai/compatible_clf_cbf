@@ -87,10 +87,12 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
         x_val: np.ndarray = self.get_input_port(0).Eval(context)
         env = {self.x[i]: x_val[i] for i in range(self.x.size)}
         V_val = self.V.Evaluate(env)
+        print(f"time={context.get_time()}, V_val={V_val}")
         output.set_value(np.array([V_val]))
 
     def calc_b(self, context: pydrake.systems.framework.Context, output):
         x_val: np.ndarray = self.get_input_port(0).Eval(context)
         env = {self.x[i]: x_val[i] for i in range(self.x.size)}
         b_val = np.array([b_i.Evaluate(env) for b_i in self.b])
+        print(f"time={context.get_time()}, b_val={b_val}")
         output.set_value(b_val)
