@@ -1,6 +1,6 @@
 black
 black[jupyter]
-drake
+drake==1.31.0
 flake8
 ipykernel
 jax

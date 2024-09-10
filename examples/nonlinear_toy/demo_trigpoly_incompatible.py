@@ -167,9 +167,10 @@ def visualize():
             h_V.legend_elements()[0][0],
             h_b.legend_elements()[0][0],
         ],
-        [r"$V(x)=1$", r"$b(x)=0$"],
+        [r"$V(x)=1$", r"$h(x)=0$"],
         prop={"size": 12},
     )
+    ax.set_title("Incompatible CLF/CBF")
     fig.show()
     for fig_extension in (".png", ".pdf"):
         fig.savefig(

@@ -131,52 +131,56 @@ class QuadrotorPolyPlant(pydrake.systems.framework.LeafSystem):
         dynamics xdot = f(x) + g(x) * u, where f(x) is a vector of symbolic
         polynomials, and g(x) is a matrix of symbolic polynomials.
         """
+        if x.dtype == object:
+            data_type = sym.Polynomial
+        else:
+            data_type = float
         assert x.shape == (13,)
-        f = np.empty((13,), dtype=object)
-        g = np.empty((13, 4), dtype=object)
+        f = np.empty((13,), dtype=x.dtype)
+        g = np.empty((13, 4), dtype=x.dtype)
         quat = x[:4] + np.array([1, 0, 0, 0])
         w_NB_B = x[-3:]
-        f[0] = sym.Polynomial(
+        f[0] = data_type(
             0.5 * (-w_NB_B[0] * quat[1] - w_NB_B[1] * quat[2] - w_NB_B[2] * quat[3])
         )
-        f[1] = sym.Polynomial(
+        f[1] = data_type(
             0.5 * (w_NB_B[0] * quat[0] + w_NB_B[2] * quat[2] - w_NB_B[1] * quat[3])
         )
-        f[2] = sym.Polynomial(
+        f[2] = data_type(
             0.5 * (w_NB_B[1] * quat[0] - w_NB_B[2] * quat[1] + w_NB_B[0] * quat[3])
         )
-        f[3] = sym.Polynomial(
+        f[3] = data_type(
             0.5 * (w_NB_B[2] * quat[0] + w_NB_B[1] * quat[1] - w_NB_B[0] * quat[2])
         )
-        f[4] = sym.Polynomial(x[7])
-        f[5] = sym.Polynomial(x[8])
-        f[6] = sym.Polynomial(x[9])
+        f[4] = data_type(x[7])
+        f[5] = data_type(x[8])
+        f[6] = data_type(x[9])
         for i in range(7):
             for j in range(4):
-                g[i][j] = sym.Polynomial()
+                g[i][j] = data_type(0)
 
-        f[7] = sym.Polynomial()
-        f[8] = sym.Polynomial()
-        f[9] = sym.Polynomial(-self.g)
+        f[7] = data_type(0)
+        f[8] = data_type(0)
+        f[9] = data_type(-self.g)
 
         R_NB = quat2rotmat(quat)
 
         for i in range(3):
             for j in range(4):
-                g[i + 7][j] = sym.Polynomial(R_NB[i, 2] * self.kF / self.m)
+                g[i + 7][j] = data_type(R_NB[i, 2] * self.kF / self.m)
 
         wIw = np.cross(w_NB_B, self.I @ w_NB_B)
         for i in range(3):
-            f[10 + i] = sym.Polynomial(-wIw[i] / self.I[i, i])
-        g[10, 0] = sym.Polynomial()
-        g[10, 1] = sym.Polynomial(self.kF * self.l / self.I[0, 0])
-        g[10, 2] = sym.Polynomial()
+            f[10 + i] = data_type(-wIw[i] / self.I[i, i])
+        g[10, 0] = data_type(0)
+        g[10, 1] = data_type(self.kF * self.l / self.I[0, 0])
+        g[10, 2] = data_type(0)
         g[10, 3] = -g[10, 1]
-        g[11, 0] = sym.Polynomial(-self.kF * self.l / self.I[1, 1])
-        g[11, 1] = sym.Polynomial()
+        g[11, 0] = data_type(-self.kF * self.l / self.I[1, 1])
+        g[11, 1] = data_type(0)
         g[11, 2] = -g[11, 0]
-        g[11, 3] = sym.Polynomial()
-        g[12, 0] = sym.Polynomial(self.kF * self.kM / self.I[2, 2])
+        g[11, 3] = data_type(0)
+        g[12, 0] = data_type(self.kF * self.kM / self.I[2, 2])
         g[12, 1] = -g[12, 0]
         g[12, 2] = -g[12, 1]
         g[12, 3] = -g[12, 0]
@@ -217,7 +221,9 @@ class QuadrotorPolyGeometry(pydrake.systems.framework.LeafSystem):
     ):
         super().__init__()
         mbp = pydrake.multibody.plant.MultibodyPlant(0.0)
-        parser = pydrake.multibody.parsing.Parser(mbp, scene_graph)
+        parser = pydrake.multibody.parsing.Parser(
+            mbp, scene_graph, "quadrotor" if name is None else name
+        )
         model_instance_indices = parser.AddModelsFromUrl(
             "package://drake_models/skydio_2/quadrotor.urdf"
         )
@@ -256,9 +262,10 @@ class QuadrotorPolyGeometry(pydrake.systems.framework.LeafSystem):
     def AddToBuilder(
         builder: pydrake.systems.framework.DiagramBuilder,
         quadrotor_state_port: pydrake.systems.framework.OutputPort,
+        name: str,
         scene_graph: pydrake.geometry.SceneGraph,
     ) -> Self:
-        quadrotor_geometry = builder.AddSystem(QuadrotorPolyGeometry(scene_graph))
+        quadrotor_geometry = builder.AddSystem(QuadrotorPolyGeometry(scene_graph, name))
         builder.Connect(quadrotor_state_port, quadrotor_geometry.get_input_port(0))
         builder.Connect(
             quadrotor_geometry.get_output_port(0),
