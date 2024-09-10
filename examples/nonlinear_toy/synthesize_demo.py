@@ -36,9 +36,9 @@ def main(with_u_bound: bool):
         use_y_squared=True,
     )
     V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2) / 0.01
-    b_init = np.array([sym.Polynomial(0.01 - x[0] ** 2 - x[1] ** 2)])
+    h_init = np.array([sym.Polynomial(0.01 - x[0] ** 2 - x[1] ** 2)])
     kappa_V = 1e-3
-    kappa_b = np.array([kappa_V])
+    kappa_h = np.array([kappa_V])
     barrier_eps = np.array([0.0001])
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
@@ -46,7 +46,7 @@ def main(with_u_bound: bool):
         xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
         y=None,
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=None,
     )
     safety_sets_lagrangian_degrees = [
@@ -66,22 +66,22 @@ def main(with_u_bound: bool):
     compatible_states_options = clf_cbf.CompatibleStatesOptions(
         candidate_compatible_states=np.array([[1, 1], [-1, 1]]),
         anchor_states=np.array([[0, 0]]),
-        b_anchor_bounds=[(np.array([0]), np.array([0.1]))],
+        h_anchor_bounds=[(np.array([0]), np.array([0.1]))],
         weight_V=1.0,
-        weight_b=np.array([1.0]),
+        weight_h=np.array([1.0]),
     )
 
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
     solver_options.SetOption(solvers.ClarabelSolver.id(), "max_iter", 10000)
 
-    V, b = compatible.bilinear_alternation(
+    V, h = compatible.bilinear_alternation(
         V_init,
-        b_init,
+        h_init,
         compatible_lagrangian_degrees,
         safety_sets_lagrangian_degrees,
         kappa_V,
-        kappa_b,
+        kappa_h,
         barrier_eps,
         x_equilibrium,
         clf_degree,

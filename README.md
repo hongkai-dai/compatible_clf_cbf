@@ -12,17 +12,17 @@ $$ \exists u\in\mathcal{U}, L_f V(x) + L_g V(x)u \leq -\kappa_VV(x)$$
 
 where $L_fV(x)$ is the Lie-derivative $\frac{\partial V}{\partial x}f(x)$, similarly $L_gV(x)$ is the Lie-derivative $\frac{\partial V}{\partial x}g(x)$. $\kappa_V>0$ is a given constant.
 
-The Control Barrier Function (CBF) $b(x)$ satisfies
+The Control Barrier Function (CBF) $h(x)$ satisfies
 
-$$ \exists u \in\mathcal{U}, L_fb(x) + L_gb(x)u \geq -\kappa_bb(x),$$
+$$ \exists u \in\mathcal{U}, L_fh(x) + L_gh(x)u \geq -\kappa_hh(x),$$
 
-$\kappa_b>0$ is a given constant.
+$\kappa_h>0$ is a given constant.
 
 ## Compatible CLF/CBF
-We say a CLF $V(x)$ is compatible with a CBF $b(x)$ if there exists a common action $u$ that satisfies both the CLF condition and the CBF condition simultaneously
+We say a CLF $V(x)$ is compatible with a CBF $h(x)$ if there exists a common action $u$ that satisfies both the CLF condition and the CBF condition simultaneously
 
 $$\exists u\in\mathcal{U} \begin{cases}L_fV(x)+L_gV(x)u\leq -\kappa_VV(x)\\
- L_fb(x)+L_gb(x)u\geq-\kappa_bb(x)\end{cases}.$$
+ L_fh(x)+L_gh(x)u\geq-\kappa_hh(x)\end{cases}.$$
 
 We will certify and synthesize such compatible CLF and CBFs through Sum-of-Squares optimization.
 

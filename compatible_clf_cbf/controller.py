@@ -18,10 +18,10 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
         f: np.ndarray,
         g: np.ndarray,
         V: sym.Polynomial,
-        b: np.ndarray,
+        h: np.ndarray,
         x: np.ndarray,
         kappa_V: float,
-        kappa_b: np.ndarray,
+        kappa_h: np.ndarray,
         Qu: np.ndarray,
         Au: Optional[np.ndarray],
         bu: Optional[np.ndarray],
@@ -35,18 +35,18 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
             "action", self.nu, self.calc_action
         ).get_index()
         self.V = V
-        self.b = b
+        self.h = h
         self.x = x
         self.V_output_index = self.DeclareVectorOutputPort(
             "V", 1, self.calc_V
         ).get_index()
-        self.b_output_index = self.DeclareVectorOutputPort(
-            "b", b.size, self.calc_b
+        self.h_output_index = self.DeclareVectorOutputPort(
+            "h", h.size, self.calc_h
         ).get_index()
         self.clf_constraint = compatible_clf_cbf.clf.ClfConstraint(V, f, g, x, kappa_V)
         self.cbf_constraint = [
-            compatible_clf_cbf.cbf.CbfConstraint(b[i], f, g, x, kappa_b[i])
-            for i in range(b.size)
+            compatible_clf_cbf.cbf.CbfConstraint(h[i], f, g, x, kappa_h[i])
+            for i in range(h.size)
         ]
         self.Qu = Qu
         self.Au = Au
@@ -61,7 +61,7 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
         return self.get_output_port(self.V_output_index)
 
     def cbf_output_port(self):
-        return self.get_output_port(self.b_output_index)
+        return self.get_output_port(self.h_output_index)
 
     def calc_action(self, context: pydrake.systems.framework.Context, output):
         x_val: np.ndarray = self.get_input_port(0).Eval(context)
@@ -90,9 +90,9 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
         print(f"time={context.get_time()}, V_val={V_val}")
         output.set_value(np.array([V_val]))
 
-    def calc_b(self, context: pydrake.systems.framework.Context, output):
+    def calc_h(self, context: pydrake.systems.framework.Context, output):
         x_val: np.ndarray = self.get_input_port(0).Eval(context)
         env = {self.x[i]: x_val[i] for i in range(self.x.size)}
-        b_val = np.array([b_i.Evaluate(env) for b_i in self.b])
-        print(f"time={context.get_time()}, b_val={b_val}")
-        output.set_value(b_val)
+        h_val = np.array([h_i.Evaluate(env) for h_i in self.h])
+        print(f"time={context.get_time()}, h_val={h_val}")
+        output.set_value(h_val)

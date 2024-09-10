@@ -16,9 +16,9 @@ from compatible_clf_cbf import clf_cbf
 def search_compatible_lagrangians(
     dut: clf_cbf.CompatibleClfCbf,
     V: sym.Polynomial,
-    b: np.ndarray,
+    h: np.ndarray,
     kappa_V: float,
-    kappa_b: np.ndarray,
+    kappa_h: np.ndarray,
 ) -> clf_cbf.CompatibleLagrangians:
     y_size = dut.y.size
 
@@ -37,11 +37,11 @@ def search_compatible_lagrangians(
             ]
         ),
         rho_minus_V=None,
-        b_plus_eps=None,
+        h_plus_eps=None,
         state_eq_constraints=None,
     )
     prog, lagrangians = dut.construct_search_compatible_lagrangians(
-        V, b, kappa_V, kappa_b, lagrangian_degrees, barrier_eps=None, local_clf=False
+        V, h, kappa_V, kappa_h, lagrangian_degrees, barrier_eps=None, local_clf=False
     )
 
     result = pydrake.solvers.Solve(prog)
@@ -51,7 +51,7 @@ def search_compatible_lagrangians(
 
 
 def search_barrier_safe_lagrangians(
-    dut: clf_cbf.CompatibleClfCbf, b: np.ndarray
+    dut: clf_cbf.CompatibleClfCbf, h: np.ndarray
 ) -> List[clf_cbf.SafetySetLagrangians]:
     lagrangian_degrees = [
         clf_cbf.SafetySetLagrangianDegrees(
@@ -61,7 +61,7 @@ def search_barrier_safe_lagrangians(
             within=None,
         )
     ]
-    lagrangians = dut.certify_cbf_safety_set(0, b[0], lagrangian_degrees[0])
+    lagrangians = dut.certify_cbf_safety_set(0, h[0], lagrangian_degrees[0])
     assert lagrangians is not None
     return [lagrangians]
 
@@ -69,12 +69,12 @@ def search_barrier_safe_lagrangians(
 def search_lagrangians(
     dut: clf_cbf.CompatibleClfCbf,
     V: sym.Polynomial,
-    b: np.ndarray,
+    h: np.ndarray,
     kappa_V: float,
-    kappa_b: np.ndarray,
+    kappa_h: np.ndarray,
 ) -> Tuple[clf_cbf.CompatibleLagrangians, List[clf_cbf.SafetySetLagrangians]]:
-    compatible_lagrangians = search_compatible_lagrangians(dut, V, b, kappa_V, kappa_b)
-    barrier_safe_lagrangians = search_barrier_safe_lagrangians(dut, b)
+    compatible_lagrangians = search_compatible_lagrangians(dut, V, h, kappa_V, kappa_h)
+    barrier_safe_lagrangians = search_barrier_safe_lagrangians(dut, h)
     return (compatible_lagrangians, barrier_safe_lagrangians)
 
 
@@ -118,11 +118,11 @@ def search(use_y_squared: bool):
     )
 
     V = sym.Polynomial(x.dot(S_lqr @ x))
-    b = np.array([alpha - V])
+    h = np.array([alpha - V])
     kappa_V = 0.001
-    kappa_b = np.array([0.001])
+    kappa_h = np.array([0.001])
 
-    search_lagrangians(dut, V, b, kappa_V, kappa_b)
+    search_lagrangians(dut, V, h, kappa_V, kappa_h)
 
 
 def main():

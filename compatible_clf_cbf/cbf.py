@@ -31,12 +31,12 @@ class CbfWoInputLimitLagrangian:
     The Lagrangians for proving the CBF condition for systems _without_ input limits.
     """
 
-    # The Lagrangian λ₀(x) in (1+λ₀(x))*(∂b/∂x*f(x)+κ*b(x))
-    dbdx_times_f: sym.Polynomial
-    # The Lagrangian λ₁(x) in λ₁(x)*∂b/∂x*g(x)
-    dbdx_times_g: np.ndarray
-    # The Lagrangian λ₂(x) in λ₂(x)*(b(x)+ε)
-    b_plus_eps: sym.Polynomial
+    # The Lagrangian λ₀(x) in (1+λ₀(x))*(∂h/∂x*f(x)+κ*h(x))
+    dhdx_times_f: sym.Polynomial
+    # The Lagrangian λ₁(x) in λ₁(x)*∂h/∂x*g(x)
+    dhdx_times_g: np.ndarray
+    # The Lagrangian λ₂(x) in λ₂(x)*(h(x)+ε)
+    h_plus_eps: sym.Polynomial
     # The array of Lagrangians for state equality constraints.
     state_eq_constraints: Optional[np.ndarray]
 
@@ -45,14 +45,14 @@ class CbfWoInputLimitLagrangian:
         result: solvers.MathematicalProgramResult,
         coefficient_tol: Optional[float],
     ) -> Self:
-        dbdx_times_f_result = get_polynomial_result(
-            result, self.dbdx_times_f, coefficient_tol
+        dhdx_times_f_result = get_polynomial_result(
+            result, self.dhdx_times_f, coefficient_tol
         )
-        dbdx_times_g_result = get_polynomial_result(
-            result, self.dbdx_times_g, coefficient_tol
+        dhdx_times_g_result = get_polynomial_result(
+            result, self.dhdx_times_g, coefficient_tol
         )
-        b_plus_eps_result = get_polynomial_result(
-            result, self.b_plus_eps, coefficient_tol
+        h_plus_eps_result = get_polynomial_result(
+            result, self.h_plus_eps, coefficient_tol
         )
         state_eq_constraints_result = (
             None
@@ -62,18 +62,18 @@ class CbfWoInputLimitLagrangian:
             )
         )
         return CbfWoInputLimitLagrangian(
-            dbdx_times_f=dbdx_times_f_result,
-            dbdx_times_g=dbdx_times_g_result,
-            b_plus_eps=b_plus_eps_result,
+            dhdx_times_f=dhdx_times_f_result,
+            dhdx_times_g=dhdx_times_g_result,
+            h_plus_eps=h_plus_eps_result,
             state_eq_constraints=state_eq_constraints_result,
         )
 
 
 @dataclass
 class CbfWoInputLimitLagrangianDegrees:
-    dbdx_times_f: int
-    dbdx_times_g: List[int]
-    b_plus_eps: int
+    dhdx_times_f: int
+    dhdx_times_g: List[int]
+    h_plus_eps: int
     state_eq_constraints: Optional[List[int]]
 
     def to_lagrangians(
@@ -84,11 +84,11 @@ class CbfWoInputLimitLagrangianDegrees:
         """
         Constructs the Lagrangians as SOS polynomials.
         """
-        dbdx_times_f, _ = new_sos_polynomial(prog, x_set, self.dbdx_times_f)
-        dbdx_times_g = np.array(
-            [prog.NewFreePolynomial(x_set, degree) for degree in self.dbdx_times_g]
+        dhdx_times_f, _ = new_sos_polynomial(prog, x_set, self.dhdx_times_f)
+        dhdx_times_g = np.array(
+            [prog.NewFreePolynomial(x_set, degree) for degree in self.dhdx_times_g]
         )
-        b_plus_eps, _ = new_sos_polynomial(prog, x_set, self.b_plus_eps)
+        h_plus_eps, _ = new_sos_polynomial(prog, x_set, self.h_plus_eps)
 
         state_eq_constraints = (
             None
@@ -101,7 +101,7 @@ class CbfWoInputLimitLagrangianDegrees:
             )
         )
         return CbfWoInputLimitLagrangian(
-            dbdx_times_f, dbdx_times_g, b_plus_eps, state_eq_constraints
+            dhdx_times_f, dhdx_times_g, h_plus_eps, state_eq_constraints
         )
 
 
@@ -111,10 +111,10 @@ class CbfWInputLimitLagrangian:
     The Lagrangians for proving the CBF condition for systems _with_ input limits.
     """
 
-    # The Lagrangian λ₀(x) in (1+λ₀(x))(b(x)+ε)
-    b_plus_eps: sym.Polynomial
-    # The Lagrangians λᵢ(x) in ∑ᵢ λᵢ(x)*(∂b/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
-    bdot: np.ndarray
+    # The Lagrangian λ₀(x) in (1+λ₀(x))(h(x)+ε)
+    h_plus_eps: sym.Polynomial
+    # The Lagrangians λᵢ(x) in ∑ᵢ λᵢ(x)*(∂h/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
+    hdot: np.ndarray
     # The Lagrangians for state equality constraints
     state_eq_constraints: Optional[np.ndarray]
 
@@ -123,11 +123,11 @@ class CbfWInputLimitLagrangian:
         result: solvers.MathematicalProgramResult,
         coefficient_tol: Optional[float],
     ) -> Self:
-        b_plus_eps_result: sym.Polynomial = get_polynomial_result(
-            result, self.b_plus_eps, coefficient_tol
+        h_plus_eps_result: sym.Polynomial = get_polynomial_result(
+            result, self.h_plus_eps, coefficient_tol
         )
-        bdot_result: np.ndarray = get_polynomial_result(
-            result, self.bdot, coefficient_tol
+        hdot_result: np.ndarray = get_polynomial_result(
+            result, self.hdot, coefficient_tol
         )
         state_eq_constraints_result = (
             None
@@ -137,16 +137,16 @@ class CbfWInputLimitLagrangian:
             )
         )
         return CbfWInputLimitLagrangian(
-            b_plus_eps=b_plus_eps_result,
-            bdot=bdot_result,
+            h_plus_eps=h_plus_eps_result,
+            hdot=hdot_result,
             state_eq_constraints=state_eq_constraints_result,
         )
 
 
 @dataclass
 class CbfWInputLimitLagrangianDegrees:
-    b_plus_eps: int
-    bdot: List[int]
+    h_plus_eps: int
+    hdot: List[int]
     state_eq_constraints: Optional[List[int]]
 
     def to_lagrangians(
@@ -154,9 +154,9 @@ class CbfWInputLimitLagrangianDegrees:
         prog: solvers.MathematicalProgram,
         x_set: sym.Variables,
     ) -> CbfWInputLimitLagrangian:
-        b_plus_eps, _ = new_sos_polynomial(prog, x_set, self.b_plus_eps)
-        bdot = np.array(
-            [new_sos_polynomial(prog, x_set, degree) for degree in self.bdot]
+        h_plus_eps, _ = new_sos_polynomial(prog, x_set, self.h_plus_eps)
+        hdot = np.array(
+            [new_sos_polynomial(prog, x_set, degree) for degree in self.hdot]
         )
         state_eq_constraints = (
             None
@@ -168,7 +168,7 @@ class CbfWInputLimitLagrangianDegrees:
                 ]
             )
         )
-        return CbfWInputLimitLagrangian(b_plus_eps, bdot, state_eq_constraints)
+        return CbfWInputLimitLagrangian(h_plus_eps, hdot, state_eq_constraints)
 
 
 class ControlBarrier:
@@ -176,33 +176,33 @@ class ControlBarrier:
     For a control affine system
     ẋ=f(x)+g(x)u, u∈𝒰
     where the unsafe region is defined by {x | p(x) <= 0}
-    we certify its CBF b(x) through SOS.
+    we certify its CBF h(x) through SOS.
 
-    We will need to verify that the super-level set {x | b(x)>=0} doesn't
-    intersect with the unsafe region. Moreover, we prove when b(x) ≥−ε, there
-    exists u∈𝒰, such that ḃ(x, u) = ∂b/∂x(f(x)+g(x)u) ≥ −κb(x).
+    We will need to verify that the super-level set {x | h(x)>=0} doesn't
+    intersect with the unsafe region. Moreover, we prove when h(x) ≥−ε, there
+    exists u∈𝒰, such that ḃ(x, u) = ∂h/∂x(f(x)+g(x)u) ≥ −κh(x).
 
     To prove this condition, we consider two cases:
     1) when the input u in unconstrained.
     2) when the input u is constrained within a polytope.
 
     If the set 𝒰 is the entire space (namely the control input is not bounded),
-    then b is an CBF iff the set satisfying the following conditions
-    ∂b/∂x*f(x)+κ*V(x) < 0
-    ∂b/∂x*g(x)=0
-    b(x)≥−ε
+    then h is an CBF iff the set satisfying the following conditions
+    ∂h/∂x*f(x)+κ*V(x) < 0
+    ∂h/∂x*g(x)=0
+    h(x)≥−ε
     is empty.
 
     By positivestellasatz, this means that there exists λ₀(x), λ₁(x), λ₂(x)
     satisfying
-    (1+λ₀(x))*(∂b/∂x*f(x)+κ*b(x))−λ₁(x)*∂b/∂x*g(x)−λ₂(x)*(b(x)+ε) is sos.
+    (1+λ₀(x))*(∂h/∂x*f(x)+κ*h(x))−λ₁(x)*∂h/∂x*g(x)−λ₂(x)*(h(x)+ε) is sos.
     λ₀(x), λ₁(x), λ₂(x) are sos.
 
-    If the set 𝒰 is a polytope with vertices u₁,..., uₙ, then b is an CBF iff
-    -ε-b(x) is always non-negative on the semi-algebraic set
-    {x|∂b/∂x*(f(x)+g(x)uᵢ)<= −κ*b(x), i=1,...,n}
+    If the set 𝒰 is a polytope with vertices u₁,..., uₙ, then h is an CBF iff
+    -ε-h(x) is always non-negative on the semi-algebraic set
+    {x|∂h/∂x*(f(x)+g(x)uᵢ)<= −κ*h(x), i=1,...,n}
     By positivestellasatz, we have
-    -(1+λ₀(x))(b(x)+ε) + ∑ᵢ λᵢ(x)*(∂b/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
+    -(1+λ₀(x))(h(x)+ε) + ∑ᵢ λᵢ(x)*(∂h/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
     λ₀(x), λᵢ(x) are sos.
 
     See Convex Synthesis and Verification of Control-Lyapunov and Barrier
@@ -263,7 +263,7 @@ class ControlBarrier:
 
     def search_lagrangians_given_cbf(
         self,
-        b: sym.Polynomial,
+        h: sym.Polynomial,
         eps: float,
         kappa: float,
         cbf_derivative_lagrangian_degrees: Union[
@@ -287,7 +287,7 @@ class ControlBarrier:
             exclude_lagrangians = safety_set_lagrangian_degrees.exclude.to_lagrangians(
                 prog_exclude, self.x_set
             )
-            self._add_barrier_exclude_constraint(prog_exclude, b, exclude_lagrangians)
+            self._add_barrier_exclude_constraint(prog_exclude, h, exclude_lagrangians)
             result_exclude = solve_with_id(prog_exclude, solver_id, solver_options)
             if result_exclude.is_success():
                 exclude_lagrangians_result = exclude_lagrangians.get_result(
@@ -308,7 +308,7 @@ class ControlBarrier:
                     i
                 ].to_lagrangians(prog_within, self.x_set)
                 self._add_barrier_within_constraint(
-                    prog_within, i, b, within_lagrangians
+                    prog_within, i, h, within_lagrangians
                 )
                 result_within = solve_with_id(prog_within, solver_id, solver_options)
                 if result_within.is_success():
@@ -326,7 +326,7 @@ class ControlBarrier:
             prog_cbf_derivative, self.x_set
         )
         self._add_cbf_derivative_condition(
-            prog_cbf_derivative, b, cbf_derivative_lagrangians, eps, kappa
+            prog_cbf_derivative, h, cbf_derivative_lagrangians, eps, kappa
         )
         result_cbf_derivative = solve_with_id(
             prog_cbf_derivative, solver_id, solver_options
@@ -345,13 +345,13 @@ class ControlBarrier:
         self,
         prog: solvers.MathematicalProgram,
         within_index: int,
-        b: sym.Polynomial,
+        h: sym.Polynomial,
         lagrangians: clf_cbf.WithinRegionLagrangians,
     ) -> sym.Polynomial:
         """
         Adds the constraint that the 0-super level set of the barrier function
         is in the safe region {x | pᵢ(x) <= 0}.
-        −(1+ϕ₀(x))pᵢ(x) − ϕ₁(x)b(x) is sos.
+        −(1+ϕ₀(x))pᵢ(x) − ϕ₁(x)h(x) is sos.
 
         Note it doesn't add the constraints
         ϕ₀(x) is sos
@@ -363,7 +363,7 @@ class ControlBarrier:
         assert self.safety_set.within is not None
         poly = (
             -(1 + lagrangians.safe_region) * self.safety_set.within[within_index]
-            - lagrangians.cbf * b
+            - lagrangians.cbf * h
         )
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
@@ -374,31 +374,31 @@ class ControlBarrier:
     def _add_barrier_exclude_constraint(
         self,
         prog: solvers.MathematicalProgram,
-        b: sym.Polynomial,
+        h: sym.Polynomial,
         lagrangians: clf_cbf.ExcludeRegionLagrangians,
     ) -> sym.Polynomial:
         """
         Adds the constraint that the 0-superlevel set of the barrier function
         does not intersect with the unsafe region.
         Since the i'th unsafe regions is defined as the 0-sublevel set of
-        polynomials p(x), we want to certify that the set {x|p(x)≤0, b(x)≥0}
+        polynomials p(x), we want to certify that the set {x|p(x)≤0, h(x)≥0}
         is empty.
         The emptiness of the set can be certified by the constraint
-        -(1+ϕ₀(x))b(x) +∑ⱼϕⱼ(x)pⱼ(x) is sos
+        -(1+ϕ₀(x))h(x) +∑ⱼϕⱼ(x)pⱼ(x) is sos
         ϕ₀(x), ϕⱼ(x) are sos.
 
         Note that this function only adds the constraint
-        -(1+ϕ₀(x))*bᵢ(x) +∑ⱼϕⱼ(x)pⱼ(x) is sos
+        -(1+ϕ₀(x))*hᵢ(x) +∑ⱼϕⱼ(x)pⱼ(x) is sos
         It doesn't add the constraint ϕ₀(x), ϕⱼ(x) are sos.
 
         Args:
-          b: a polynomial, b is the barrier function for the
+          h: a polynomial, h is the barrier function for the
             unsafe region self.unsafe_regions[unsafe_region_index].
           lagrangians: A array of polynomials, ϕ(x) in the documentation above.
         Returns:
-          poly: poly is the polynomial -(1+ϕ₀(x))bᵢ(x) + ∑ⱼϕⱼ(x)pⱼ(x)
+          poly: poly is the polynomial -(1+ϕ₀(x))hᵢ(x) + ∑ⱼϕⱼ(x)pⱼ(x)
         """
-        poly = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
+        poly = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
             self.safety_set.exclude
         )
         if self.state_eq_constraints is not None:
@@ -410,7 +410,7 @@ class ControlBarrier:
     def _add_cbf_derivative_condition(
         self,
         prog: solvers.MathematicalProgram,
-        b: sym.Polynomial,
+        h: sym.Polynomial,
         lagrangians: Union[CbfWInputLimitLagrangian, CbfWoInputLimitLagrangian],
         eps: float,
         kappa: float,
@@ -418,25 +418,25 @@ class ControlBarrier:
         """
         Add the constraint
         If u is unbounded:
-        (1+λ₀(x))*(∂b/∂x*f(x)+κ*b(x))−λ₁(x)*∂b/∂x*g(x)−λ₂(x)*(b(x)+ε) is sos.
+        (1+λ₀(x))*(∂h/∂x*f(x)+κ*h(x))−λ₁(x)*∂h/∂x*g(x)−λ₂(x)*(h(x)+ε) is sos.
         otherwise:
-        -(1+λ₀(x))(b(x)+ε) + ∑ᵢ λᵢ(x)*(∂b/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
+        -(1+λ₀(x))(h(x)+ε) + ∑ᵢ λᵢ(x)*(∂h/∂x*(f(x)+g(x)uᵢ)+κ*V(x))
         """
-        dbdx = b.Jacobian(self.x)
-        dbdx_times_f = dbdx.dot(self.f)
-        dbdx_times_g = dbdx.reshape((1, -1)) @ self.g
+        dhdx = h.Jacobian(self.x)
+        dhdx_times_f = dhdx.dot(self.f)
+        dhdx_times_g = dhdx.reshape((1, -1)) @ self.g
         if self.u_vertices is None:
             assert isinstance(lagrangians, CbfWoInputLimitLagrangian)
             sos_poly = (
-                (1 + lagrangians.dbdx_times_f) * (dbdx_times_f + kappa * b)
-                - lagrangians.dbdx_times_g.dot(dbdx_times_g.reshape((-1,)))
-                - lagrangians.b_plus_eps * (b + eps)
+                (1 + lagrangians.dhdx_times_f) * (dhdx_times_f + kappa * h)
+                - lagrangians.dhdx_times_g.dot(dhdx_times_g.reshape((-1,)))
+                - lagrangians.h_plus_eps * (h + eps)
             )
         else:
             assert isinstance(lagrangians, CbfWInputLimitLagrangian)
-            bdot = (dbdx_times_f + dbdx_times_g @ self.u_vertices.T).reshape((-1,))
-            sos_poly = -(1 + lagrangians.b_plus_eps) * (b + eps) + lagrangians.bdot.dot(
-                bdot + kappa * b
+            hdot = (dhdx_times_f + dhdx_times_g @ self.u_vertices.T).reshape((-1,))
+            sos_poly = -(1 + lagrangians.h_plus_eps) * (h + eps) + lagrangians.hdot.dot(
+                hdot + kappa * h
             )
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
@@ -447,22 +447,22 @@ class ControlBarrier:
 
 class CbfConstraint:
     """
-    Add the linear constraint dbdx * f(x) + dbdx * g(x)*u >= -kappa * b(x) on u.
+    Add the linear constraint dhdx * f(x) + dhdx * g(x)*u >= -kappa * h(x) on u.
     """
 
     def __init__(
         self,
-        b: sym.Polynomial,
+        h: sym.Polynomial,
         f: np.ndarray,
         g: np.ndarray,
         x: np.ndarray,
         kappa: float,
     ):
-        dbdx = b.Jacobian(x)
-        dbdx_times_f = dbdx.dot(f)
-        dbdx_times_g = dbdx @ g
-        self.rhs = -kappa * b - dbdx_times_f
-        self.lhs_coeff = dbdx_times_g
+        dhdx = h.Jacobian(x)
+        dhdx_times_f = dhdx.dot(f)
+        dhdx_times_g = dhdx @ g
+        self.rhs = -kappa * h - dhdx_times_f
+        self.lhs_coeff = dhdx_times_g
         self.x = x
 
     def add_to_prog(

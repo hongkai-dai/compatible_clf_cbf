@@ -35,8 +35,8 @@ def get_clf_init(x: np.ndarray) -> sym.Polynomial:
 
 
 def get_cbf_init(x: np.ndarray):
-    b_init = sym.Polynomial(x[0] + x[1] + x[2] + 2)
-    return b_init
+    h_init = sym.Polynomial(x[0] + x[1] + x[2] + 2)
+    return h_init
 
 
 def search_clf(x: np.ndarray, kappa: float) -> sym.Polynomial:
@@ -88,19 +88,19 @@ def plot_error_region(
     ax: matplotlib.axes.Axes,
     V: sym.Polynomial,
     rho: float,
-    b: sym.Polynomial,
+    h: sym.Polynomial,
     x: np.ndarray,
     kappa_V: float,
-    kappa_b: float,
+    kappa_h: float,
 ):
     """
     Plot the intersection of the incompatible region (where CLF and CBF don't
-    have a common solution) and the region where V <= rho and b >= 0.
+    have a common solution) and the region where V <= rho and h >= 0.
     """
     grid_theta, grid_x2, grid_x_vals = demo_trigpoly.get_grid_pts()
     compute_incompatible = (
         examples.nonlinear_toy.incompatibility.ComputeIncompatibility(
-            V, b, x, kappa_V, kappa_b, u_min=-1, u_max=1
+            V, h, x, kappa_V, kappa_h, u_min=-1, u_max=1
         )
     )
     grid_incompatible_vals = np.array(
@@ -111,15 +111,15 @@ def plot_error_region(
     ).reshape(grid_theta.shape)
 
     grid_V = V.EvaluateIndeterminates(x, grid_x_vals).reshape(grid_theta.shape)
-    grid_b = b.EvaluateIndeterminates(x, grid_x_vals).reshape(grid_theta.shape)
+    grid_h = h.EvaluateIndeterminates(x, grid_x_vals).reshape(grid_theta.shape)
 
-    # We draw the region that grid_incompatible_vals > 0 and grid_V < rho and grid_b > 0
+    # We draw the region that grid_incompatible_vals > 0 and grid_V < rho and grid_h > 0
     grid_error_value = np.min(
         np.concatenate(
             (
                 np.expand_dims(grid_incompatible_vals, axis=2),
                 np.expand_dims(rho - grid_V, axis=2),
-                np.expand_dims(grid_b, axis=2),
+                np.expand_dims(grid_h, axis=2),
             ),
             axis=2,
         ),
@@ -140,7 +140,7 @@ def visualize():
     kappa_V = 0.1
     x = sym.MakeVectorContinuousVariable(3, "x")
     V = search_clf(x, kappa_V)
-    b = get_cbf_init(x)
+    h = get_cbf_init(x)
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.set_xlabel(r"$\theta$ (rad)", fontsize=16)
@@ -150,22 +150,22 @@ def visualize():
         [r"$-\pi$", r"$-\frac{\pi}{2}$", r"0", r"$\frac{\pi}{2}$", r"$\pi$"]
     )
     ax.tick_params(axis="both", which="major", labelsize=14)
-    h_V, h_b, h_compatible = demo_trigpoly.plot_clf_cbf(
-        ax, V, np.array([b]), x, fill_compatible=False
+    h_V, h_h, h_compatible = demo_trigpoly.plot_clf_cbf(
+        ax, V, np.array([h]), x, fill_compatible=False
     )
     demo_trigpoly.plot_unsafe_regions(ax)
     h_incompatible = demo_trigpoly.plot_incompatible(  # noqa
         ax,
         V,
-        b,
+        h,
         x,
         kappa_V=kappa_V,
-        kappa_b=0.1,
+        kappa_h=0.1,
     )
     ax.legend(
         [
             h_V.legend_elements()[0][0],
-            h_b.legend_elements()[0][0],
+            h_h.legend_elements()[0][0],
         ],
         [r"$V(x)=1$", r"$h(x)=0$"],
         prop={"size": 12},

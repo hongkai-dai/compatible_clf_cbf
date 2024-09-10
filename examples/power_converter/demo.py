@@ -94,10 +94,10 @@ def search(use_y_squared: bool):
     )
     V_degree = 2
     V_init = 50 * find_regional_clf(V_degree, x)
-    b_init = np.array([1 - V_init])
+    h_init = np.array([1 - V_init])
 
     kappa_V = 1e-3
-    kappa_b = np.array([kappa_V])
+    kappa_h = np.array([kappa_V])
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[
@@ -116,7 +116,7 @@ def search(use_y_squared: bool):
             ]
         ),
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=2)],
         state_eq_constraints=None,
     )
 
@@ -140,26 +140,26 @@ def search(use_y_squared: bool):
     compatible_states_options = clf_cbf.CompatibleStatesOptions(
         candidate_compatible_states=candidate_compatible_states,
         anchor_states=np.zeros((1, 3)),
-        b_anchor_bounds=[[np.array([0.1]), np.array([1])]],
+        h_anchor_bounds=[[np.array([0.1]), np.array([1])]],
         weight_V=1,
-        weight_b=np.array([1]),
+        weight_h=np.array([1]),
         V_margin=0,
-        b_margins=np.array([0.01]),
+        h_margins=np.array([0.01]),
     )
 
     kappa_V = 1e-3
-    kappa_b = np.array([kappa_V])
+    kappa_h = np.array([kappa_V])
 
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 1)
 
     compatible.bilinear_alternation(
         V_init=V_init,
-        b_init=b_init,
+        h_init=h_init,
         compatible_lagrangian_degrees=compatible_lagrangian_degrees,
         safety_sets_lagrangian_degrees=safety_sets_lagrangian_degrees,
         kappa_V=kappa_V,
-        kappa_b=kappa_b,
+        kappa_h=kappa_h,
         barrier_eps=barrier_eps,
         x_equilibrium=x_equilibrium,
         clf_degree=2,

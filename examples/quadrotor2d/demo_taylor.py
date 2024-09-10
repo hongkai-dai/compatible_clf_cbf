@@ -51,9 +51,9 @@ def search_clf_cbf(
     K_lqr, S_lqr = lqr(quadrotor)
     V_init = sym.Polynomial(x.dot(S_lqr @ x) / 0.01)
     V_init = V_init.RemoveTermsWithSmallCoefficients(1e-10)
-    b_init = np.array([1 - V_init])
+    h_init = np.array([1 - V_init])
     kappa_V = 1e-3
-    kappa_b = np.array([kappa_V])
+    kappa_h = np.array([kappa_V])
 
     # Ground as the unsafe region.
     safety_sets = [
@@ -84,7 +84,7 @@ def search_clf_cbf(
             ]
         ),
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=2)],
         state_eq_constraints=None,
     )
     barrier_eps = np.array([0.0])
@@ -123,21 +123,21 @@ def search_clf_cbf(
                 ]
             ),
             anchor_states=np.zeros((1, 6)),
-            b_anchor_bounds=[(np.array([0.0]), np.array([1]))],
+            h_anchor_bounds=[(np.array([0.0]), np.array([1]))],
             weight_V=1,
-            weight_b=np.array([1]),
+            weight_h=np.array([1]),
         )
         max_iter = 5
     else:
         raise Exception("unsupported grow heuristics.")
 
-    V, b = compatible.bilinear_alternation(
+    V, h = compatible.bilinear_alternation(
         V_init,
-        b_init,
+        h_init,
         lagrangian_degrees,
         safety_sets_lagrangian_degrees,
         kappa_V,
-        kappa_b,
+        kappa_h,
         barrier_eps,
         x_equilibrium=np.zeros((6,)),
         clf_degree=2,
@@ -149,7 +149,7 @@ def search_clf_cbf(
         compatible_states_options=compatible_states_options,
         backoff_scale=compatible_clf_cbf.utils.BackoffScale(rel=0.02, abs=None),
     )
-    return V, b
+    return V, h
 
 
 def main():

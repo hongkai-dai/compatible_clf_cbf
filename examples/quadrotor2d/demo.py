@@ -48,10 +48,10 @@ def main(use_y_squared: bool, with_u_bound: bool):
 
     V_degree = 2
     V_init = 10 * demo_clf.find_trig_regional_clf(V_degree, x)
-    b_degrees = [2]
-    b_init = np.array([1 - V_init])
+    h_degrees = [2]
+    h_init = np.array([1 - V_init])
     kappa_V = 0
-    kappa_b = np.array([kappa_V])
+    kappa_h = np.array([kappa_V])
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
 
@@ -72,7 +72,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
             ]
         ),
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
     safety_sets_lagrangian_degrees = [
@@ -95,24 +95,24 @@ def main(use_y_squared: bool, with_u_bound: bool):
             ]
         ),
         anchor_states=np.zeros((1, 7)),
-        b_anchor_bounds=[(np.array([0.0]), np.array([1]))],
+        h_anchor_bounds=[(np.array([0.0]), np.array([1]))],
         weight_V=1,
-        weight_b=np.array([1]),
-        b_margins=np.array([0.02]),
+        weight_h=np.array([1]),
+        h_margins=np.array([0.02]),
     )
 
     max_iter = 5
-    V, b = compatible.bilinear_alternation(
+    V, h = compatible.bilinear_alternation(
         V_init,
-        b_init,
+        h_init,
         compatible_lagrangian_degrees,
         safety_sets_lagrangian_degrees,
         kappa_V,
-        kappa_b,
+        kappa_h,
         barrier_eps,
         x_equilibrium,
         V_degree,
-        b_degrees,
+        h_degrees,
         max_iter=max_iter,
         solver_options=solver_options,
         # solver_id = solvers.ClarabelSolver().id(),
@@ -127,10 +127,10 @@ def main(use_y_squared: bool, with_u_bound: bool):
     )
     clf_cbf.save_clf_cbf(
         V,
-        b,
+        h,
         x_set,
         kappa_V,
-        kappa_b,
+        kappa_h,
         pickle_path,
     )
 
@@ -140,9 +140,9 @@ def main(use_y_squared: bool, with_u_bound: bool):
         safety_sets_lagrangians,
     ) = compatible.search_lagrangians_given_clf_cbf(
         V,
-        b,
+        h,
         kappa_V=1e-4,
-        kappa_b=np.array([1e-4]),
+        kappa_h=np.array([1e-4]),
         barrier_eps=barrier_eps,
         compatible_lagrangian_degrees=compatible_lagrangian_degrees,
         safety_set_lagrangian_degrees=safety_sets_lagrangian_degrees,

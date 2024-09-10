@@ -36,9 +36,9 @@ def main(use_y_squared: bool, with_u_bound: bool):
         use_y_squared=use_y_squared,
     )
     V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2) / 0.01
-    b_init = np.array([sym.Polynomial(0.001 - x[0] ** 2 - x[1] ** 2)])
+    h_init = np.array([sym.Polynomial(0.001 - x[0] ** 2 - x[1] ** 2)])
     kappa_V = 1e-3
-    kappa_b = np.array([kappa_V])
+    kappa_h = np.array([kappa_V])
 
     lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=3, y=0)],
@@ -52,7 +52,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
             ]
         ),
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=None,
     )
     barrier_eps = np.array([0.0001])
@@ -60,7 +60,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         compatible_prog,
         compatible_lagrangians,
     ) = compatible.construct_search_compatible_lagrangians(
-        V_init, b_init, kappa_V, kappa_b, lagrangian_degrees, barrier_eps
+        V_init, h_init, kappa_V, kappa_h, lagrangian_degrees, barrier_eps
     )
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
@@ -79,7 +79,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
     safety_sets_lagrangians = [
         compatible.certify_cbf_safety_set(
             safety_set_index=0,
-            cbf=b_init[0],
+            cbf=h_init[0],
             lagrangian_degrees=safety_sets_lagrangian_degrees[0],
             solver_options=None,
         )

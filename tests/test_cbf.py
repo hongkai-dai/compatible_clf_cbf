@@ -51,7 +51,7 @@ class TestCbf:
                 B[i, j] = self.g[i, j].Evaluate(env)
         return (A, B)
 
-    def get_b_init(self) -> sym.Polynomial:
+    def get_h_init(self) -> sym.Polynomial:
         A, B = self.linearize()
         K, S = controllers.LinearQuadraticRegulator(
             A, B, Q=np.eye(self.nx), R=np.eye(self.nu)
@@ -75,7 +75,7 @@ class TestCbf:
             u_vertices=None,
             state_eq_constraints=None,
         )
-        b = self.get_b_init()
+        h = self.get_h_init()
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(dut.x_set)
 
@@ -87,8 +87,8 @@ class TestCbf:
             state_eq_constraints=None,
         )
 
-        poly = dut._add_barrier_exclude_constraint(prog, b, lagrangians)
-        poly_expected = -(1 + lagrangians.cbf) * b + lagrangians.unsafe_region.dot(
+        poly = dut._add_barrier_exclude_constraint(prog, h, lagrangians)
+        poly_expected = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
             dut.safety_set.exclude
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
@@ -110,32 +110,32 @@ class TestCbf:
             u_vertices=None,
             state_eq_constraints=None,
         )
-        b_init = self.get_b_init()
+        h_init = self.get_h_init()
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(dut.x_set)
         lagrangian_degrees = mut.CbfWoInputLimitLagrangianDegrees(
-            dbdx_times_f=2, dbdx_times_g=[2, 2], b_plus_eps=2, state_eq_constraints=None
+            dhdx_times_f=2, dhdx_times_g=[2, 2], h_plus_eps=2, state_eq_constraints=None
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set)
         eps = 0.01
         kappa = 0.001
         sos_poly = dut._add_cbf_derivative_condition(
-            prog, b_init, lagrangians, eps, kappa
+            prog, h_init, lagrangians, eps, kappa
         )
         result = solvers.Solve(prog)
         assert result.is_success()
 
         lagrangians_result = lagrangians.get_result(result, coefficient_tol=None)
-        assert is_sos(lagrangians_result.dbdx_times_f)
+        assert is_sos(lagrangians_result.dhdx_times_f)
 
-        dbdx = b_init.Jacobian(self.x)
-        dbdx_times_f = dbdx.dot(self.f)
-        dbdx_times_g = dbdx @ self.g
+        dhdx = h_init.Jacobian(self.x)
+        dhdx_times_f = dhdx.dot(self.f)
+        dhdx_times_g = dhdx @ self.g
 
         sos_poly_expected = (
-            (1 + lagrangians.dbdx_times_f) * (dbdx_times_f + kappa * b_init)
-            - lagrangians.dbdx_times_g.dot(dbdx_times_g)
-            - lagrangians.b_plus_eps * (b_init + eps)
+            (1 + lagrangians.dhdx_times_f) * (dhdx_times_f + kappa * h_init)
+            - lagrangians.dhdx_times_g.dot(dhdx_times_g)
+            - lagrangians.h_plus_eps * (h_init + eps)
         )
         sos_poly_result = result.GetSolution(sos_poly)
         sos_poly_expected_result = result.GetSolution(sos_poly_expected)
