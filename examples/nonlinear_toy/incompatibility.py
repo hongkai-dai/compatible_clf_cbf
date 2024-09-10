@@ -10,24 +10,24 @@ import examples.nonlinear_toy.toy_system as toy_system
 class ComputeIncompatibility:
     """
     The CLF constraint is a_V * u <= b_V
-    The CBF constraint is a_b * u <= b_b
+    The CBF constraint is a_h * u <= b_h
     We define the incompatibility as the "signed distance" between the the set
-    {u | a_V * u <= b_V} and the set {u | a_b * u <= b_b}.
+    {u | a_V * u <= b_V} and the set {u | a_h * u <= b_h}.
     """
 
     def __init__(
         self,
         V: sym.Polynomial,
-        b: sym.Polynomial,
+        h: sym.Polynomial,
         x: np.ndarray,
         kappa_V: float,
-        kappa_b: float,
+        kappa_h: float,
         u_min: float,
         u_max: float,
     ):
         f, g = toy_system.affine_trig_poly_dynamics(x)
         self.clf_constraint = clf.ClfConstraint(V, f, g, x, kappa_V)
-        self.cbf_constraint = cbf.CbfConstraint(b, f, g, x, kappa_b)
+        self.cbf_constraint = cbf.CbfConstraint(h, f, g, x, kappa_h)
         self.u_min = u_min
         self.u_max = u_max
 
@@ -43,13 +43,13 @@ class ComputeIncompatibility:
         else:
             a_V = clf_cnstr.evaluator().GetDenseA()[0, 0]
             b_V = clf_cnstr.evaluator().upper_bound()[0]
-        # Write cbf_cnstr in the a_b * u <= b_b form
+        # Write cbf_cnstr in the a_h * u <= b_h form
         if np.isinf(cbf_cnstr.evaluator().upper_bound()):
-            a_b = -cbf_cnstr.evaluator().GetDenseA()[0, 0]
-            b_b = -cbf_cnstr.evaluator().lower_bound()[0]
+            a_h = -cbf_cnstr.evaluator().GetDenseA()[0, 0]
+            b_h = -cbf_cnstr.evaluator().lower_bound()[0]
         else:
-            a_b = cbf_cnstr.evaluator().GetDenseA()[0, 0]
-            b_b = cbf_cnstr.evaluator().upper_bound()[0]
+            a_h = cbf_cnstr.evaluator().GetDenseA()[0, 0]
+            b_h = cbf_cnstr.evaluator().upper_bound()[0]
         if a_V > 0:
             # By CLF constraint, we have u <= b_V / a_V
             u_clf_upper = b_V / a_V
@@ -65,11 +65,11 @@ class ComputeIncompatibility:
             u_clf_upper = np.inf
             u_clf_lower = b_V / a_V
 
-        if a_b > 0:
-            u_cbf_upper = b_b / a_b
+        if a_h > 0:
+            u_cbf_upper = b_h / a_h
             u_cbf_lower = -np.inf
-        elif a_b == 0:
-            if b_b >= 0:
+        elif a_h == 0:
+            if b_h >= 0:
                 u_cbf_upper = np.inf
                 u_cbf_lower = -np.inf
             else:
@@ -77,7 +77,7 @@ class ComputeIncompatibility:
                 u_cbf_lower = -np.inf
         else:
             u_cbf_upper = np.inf
-            u_cbf_lower = b_b / a_b
+            u_cbf_lower = b_h / a_h
 
         u_upper = np.min([u_cbf_upper, u_clf_upper, self.u_max])
         u_lower = np.max([u_clf_lower, u_cbf_lower, self.u_min])

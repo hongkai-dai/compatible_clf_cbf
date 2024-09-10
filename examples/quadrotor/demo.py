@@ -68,7 +68,7 @@ def search(use_y_squared: bool, with_u_bound: bool):
     load_V_init: bool = True
     x_set = sym.Variables(x)
     V_degree = 2
-    b_degrees = [2]
+    h_degrees = [2]
     if load_V_init:
         data = clf.load_clf(
             os.path.join(
@@ -83,9 +83,9 @@ def search(use_y_squared: bool, with_u_bound: bool):
             V_degree=2, x=x, save_pickle_filename="quadrotor_V_init1.pkl"
         )
 
-    b_init = np.array([1 - V_init])
+    h_init = np.array([1 - V_init])
 
-    load_clf_cbf = True
+    load_clf_cbf = False
     if load_clf_cbf:
         data = clf_cbf.load_clf_cbf(
             os.path.join(
@@ -95,9 +95,9 @@ def search(use_y_squared: bool, with_u_bound: bool):
             x_set,
         )
         V_init = data["V"]
-        b_init = data["b"]
+        h_init = data["h"]
     kappa_V_sequences = [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.2, 0.25, 0.625]
-    kappa_b_sequences = [np.array([0.2]) for _ in range(len(kappa_V_sequences))]
+    kappa_h_sequences = [np.array([0.2]) for _ in range(len(kappa_V_sequences))]
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[
@@ -116,7 +116,7 @@ def search(use_y_squared: bool, with_u_bound: bool):
             ]
         ),
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
     safety_sets_lagrangian_degrees = [
@@ -249,7 +249,7 @@ def search(use_y_squared: bool, with_u_bound: bool):
         solvers.MathematicalProgram.NonnegativePolynomial.kSdsos,
     ]
     V_margin_sequence = [None, None, None, None, None, 0.01, 0.01, 0.01, 0.05, 0.05]
-    b_margins_sequence = [
+    h_margins_sequence = [
         None,
         None,
         np.array([0.05]),
@@ -264,7 +264,7 @@ def search(use_y_squared: bool, with_u_bound: bool):
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
     V = V_init
-    b = b_init
+    h = h_init
     max_iter_sequence = [1, 1, 1, 2, 1, 1, 2, 2, 3, 1, 1]
     backoff_scale_sequence = [
         BackoffScale(rel=None, abs=0.2),
@@ -278,30 +278,30 @@ def search(use_y_squared: bool, with_u_bound: bool):
         BackoffScale(rel=None, abs=0.1),
         BackoffScale(rel=None, abs=0.1),
     ]
-    for i in range(9, 10):  # len(candidate_compatible_states_sequences)):
+    for i in range(len(candidate_compatible_states_sequences)):
         compatible_states_options = clf_cbf.CompatibleStatesOptions(
             candidate_compatible_states=candidate_compatible_states_sequences[i],
             anchor_states=np.zeros((1, 13)),
-            b_anchor_bounds=[(np.array([0.6]), np.array([1.0]))],
+            h_anchor_bounds=[(np.array([0.6]), np.array([1.0]))],
             weight_V=1,
-            weight_b=np.array([1]),
+            weight_h=np.array([1]),
             V_margin=V_margin_sequence[i],
-            b_margins=b_margins_sequence[i],
+            h_margins=h_margins_sequence[i],
         )
 
         kappa_V = kappa_V_sequences[i]
-        kappa_b = kappa_b_sequences[i]
-        V, b = compatible.bilinear_alternation(
+        kappa_h = kappa_h_sequences[i]
+        V, h = compatible.bilinear_alternation(
             V,
-            b,
+            h,
             compatible_lagrangian_degrees,
             safety_sets_lagrangian_degrees,
             kappa_V,
-            kappa_b,
+            kappa_h,
             barrier_eps,
             x_equilibrium,
             V_degree,
-            b_degrees,
+            h_degrees,
             max_iter=max_iter_sequence[i],
             solver_options=solver_options,
             lagrangian_coefficient_tol=None,
@@ -313,7 +313,7 @@ def search(use_y_squared: bool, with_u_bound: bool):
             os.path.dirname(os.path.abspath(__file__)),
             f"../../data/quadrotor_clf_cbf{i}.pkl",
         )
-        clf_cbf.save_clf_cbf(V, b, x_set, kappa_V, kappa_b, pickle_path)
+        clf_cbf.save_clf_cbf(V, h, x_set, kappa_V, kappa_h, pickle_path)
 
 
 def build_diagram() -> Tuple[
@@ -354,9 +354,9 @@ def build_diagram() -> Tuple[
     )
     clf_cbf_data = clf_cbf.load_clf_cbf(pickle_path, x_set)
     V = clf_cbf_data["V"]
-    b = clf_cbf_data["b"]
+    h = clf_cbf_data["h"]
     kappa_V = clf_cbf_data["kappa_V"]
-    kappa_b = clf_cbf_data["kappa_b"]
+    kappa_h = clf_cbf_data["kappa_h"]
 
     Qu = np.eye(4)
     clf_cbf_controller = builder.AddSystem(
@@ -364,10 +364,10 @@ def build_diagram() -> Tuple[
             f,
             g,
             V,
-            b,
+            h,
             x,
             kappa_V,
-            kappa_b,
+            kappa_h,
             Qu,
             Au=None,
             bu=None,

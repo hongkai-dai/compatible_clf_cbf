@@ -60,7 +60,7 @@ def certify_clf_cbf_separately(
     cbf: sym.Polynomial,
     rho: float,
     kappa_V: float,
-    kappa_b: float,
+    kappa_h: float,
     barrier_eps: float,
     obstacle_center: np.ndarray,
     obstacle_radius: float,
@@ -104,9 +104,9 @@ def certify_clf_cbf_separately(
     ) = control_barrier.search_lagrangians_given_cbf(
         cbf,
         barrier_eps,
-        kappa_b,
+        kappa_h,
         CbfWoInputLimitLagrangianDegrees(
-            dbdx_times_f=0, dbdx_times_g=[1, 1], b_plus_eps=0, state_eq_constraints=None
+            dhdx_times_f=0, dhdx_times_g=[1, 1], h_plus_eps=0, state_eq_constraints=None
         ),
         clf_cbf.SafetySetLagrangianDegrees(
             exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
@@ -134,7 +134,7 @@ def certify_clf_cbf_separately(
         + obstacle_center / np.linalg.norm(obstacle_center) * obstacle_radius
     )
     assert not compatible.check_compatible_at_state(
-        clf, np.array([cbf]), x_incompatible, kappa_V, np.array([kappa_b])
+        clf, np.array([cbf]), x_incompatible, kappa_V, np.array([kappa_h])
     )[0]
 
 
@@ -142,13 +142,13 @@ def main():
     x = sym.MakeVectorContinuousVariable(2, "x")
     obstacle_center = np.array([1.0, 0.0])
     obstacle_radius = 0.5
-    V, b = find_clf_cbf_separately(x, obstacle_center, obstacle_radius)
+    V, h = find_clf_cbf_separately(x, obstacle_center, obstacle_radius)
     rho = 10
     kappa_V = 0.01
-    kappa_b = 0.01
+    kappa_h = 0.01
     barrier_eps = 0.0
     certify_clf_cbf_separately(
-        x, V, b, rho, kappa_V, kappa_b, barrier_eps, obstacle_center, obstacle_radius
+        x, V, h, rho, kappa_V, kappa_h, barrier_eps, obstacle_center, obstacle_radius
     )
 
 

@@ -39,7 +39,7 @@ def get_grid_pts():
 def plot_clf_cbf(
     ax: matplotlib.axes.Axes,
     V: sym.Polynomial,
-    b: np.ndarray,
+    h: np.ndarray,
     x: np.ndarray,
     fill_compatible: bool,
 ) -> Tuple[
@@ -55,14 +55,14 @@ def plot_clf_cbf(
     """
     grid_theta, grid_x2, grid_x_vals = get_grid_pts()
     grid_V = V.EvaluateIndeterminates(x, grid_x_vals).reshape(grid_theta.shape)
-    grid_b = b[0].EvaluateIndeterminates(x, grid_x_vals).reshape(grid_theta.shape)
+    grid_h = h[0].EvaluateIndeterminates(x, grid_x_vals).reshape(grid_theta.shape)
     h_V = ax.contour(grid_theta, grid_x2, grid_V, levels=np.array([1]), colors="red")
-    h_b = ax.contour(grid_theta, grid_x2, grid_b, levels=np.array([0]), colors="blue")
+    h_h = ax.contour(grid_theta, grid_x2, grid_h, levels=np.array([0]), colors="blue")
 
     if fill_compatible:
-        # Fill in the region {x|V(x)<=1, b(x) >= 0}, namely
-        # {x | max(V(x)-1, -b(x)) <= 0}.
-        grid_fill_vals = np.maximum(grid_V - 1, -grid_b)
+        # Fill in the region {x|V(x)<=1, h(x) >= 0}, namely
+        # {x | max(V(x)-1, -h(x)) <= 0}.
+        grid_fill_vals = np.maximum(grid_V - 1, -grid_h)
         h_compatible = ax.contourf(
             grid_theta,
             grid_x2,
@@ -74,7 +74,7 @@ def plot_clf_cbf(
     else:
         h_compatible = None
 
-    return h_V, h_b, h_compatible
+    return h_V, h_h, h_compatible
 
 
 def get_unsafe_regions(x: np.ndarray) -> np.ndarray:
@@ -109,19 +109,19 @@ def plot_unsafe_regions(ax: matplotlib.axes.Axes):
 
 def get_clf_cbf_init(x: np.ndarray) -> Tuple[sym.Polynomial, np.ndarray]:
     V_init = sym.Polynomial(x[0] ** 2 + x[1] ** 2 + x[2] ** 2) / 0.1
-    b_init = np.array([sym.Polynomial(0.1 - x[0] ** 2 - x[1] ** 2 - x[2] ** 2)])
-    return V_init, b_init
+    h_init = np.array([sym.Polynomial(0.1 - x[0] ** 2 - x[1] ** 2 - x[2] ** 2)])
+    return V_init, h_init
 
 
 def plot_clf_cbf_init(
     ax: matplotlib.axes.Axes,
 ) -> Tuple[matplotlib.contour.QuadContourSet, matplotlib.contour.QuadContourSet]:
     x = sym.MakeVectorContinuousVariable(3, "x")
-    V_init, b_init = get_clf_cbf_init(x)
-    h_V_init, h_b_init, _ = plot_clf_cbf(ax, V_init, b_init, x, fill_compatible=False)
+    V_init, h_init = get_clf_cbf_init(x)
+    h_V_init, h_h_init, _ = plot_clf_cbf(ax, V_init, h_init, x, fill_compatible=False)
     h_V_init.set(linestyle="dotted", edgecolor="r")
-    h_b_init.set(linestyle=(0, (3, 5, 1, 5)), edgecolor="b")
-    return h_V_init, h_b_init
+    h_h_init.set(linestyle=(0, (3, 5, 1, 5)), edgecolor="b")
+    return h_V_init, h_h_init
 
 
 def search(unit_test_flag: bool = False):
@@ -141,14 +141,14 @@ def search(unit_test_flag: bool = False):
         use_y_squared=use_y_squared,
         state_eq_constraints=state_eq_constraints,
     )
-    V_init, b_init = get_clf_cbf_init(x)
+    V_init, h_init = get_clf_cbf_init(x)
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
         lambda_y=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
         xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
         y=None,
         rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        b_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
     safety_sets_lagrangian_degrees = [
@@ -160,7 +160,7 @@ def search(unit_test_flag: bool = False):
         )
     ]
     kappa_V = 0.1
-    kappa_b = np.array([0.1])
+    kappa_h = np.array([0.1])
     barrier_eps = np.array([0.001])
 
     x_equilibrium = np.array([0, 0.0, 0.0])
@@ -185,21 +185,21 @@ def search(unit_test_flag: bool = False):
             ]
         ),
         anchor_states=np.array([[0.0, 0, 0]]),
-        b_anchor_bounds=[(np.array([0]), np.array([0.1]))],
+        h_anchor_bounds=[(np.array([0]), np.array([0.1]))],
         weight_V=1,
-        weight_b=np.array([1.0]),
-        b_margins=np.array([0.01]),
+        weight_h=np.array([1.0]),
+        h_margins=np.array([0.01]),
     )
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, 0)
 
-    V, b = compatible.bilinear_alternation(
+    V, h = compatible.bilinear_alternation(
         V_init,
-        b_init,
+        h_init,
         compatible_lagrangian_degrees,
         safety_sets_lagrangian_degrees,
         kappa_V,
-        kappa_b,
+        kappa_h,
         barrier_eps,
         x_equilibrium,
         clf_degree,
@@ -212,37 +212,37 @@ def search(unit_test_flag: bool = False):
         # backoff_scale=utils.BackoffScale(rel=None, abs=0.005),
     )
     print(f"V={V}")
-    print(f"b={b}")
+    print(f"h={h}")
     assert V is not None
     x_set = sym.Variables(x)
     if not unit_test_flag:
         clf_cbf.save_clf_cbf(
             V,
-            b,
+            h,
             x_set,
             kappa_V,
-            kappa_b,
+            kappa_h,
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 "../../data/nonlinear_toy_clf_cbf.pkl",
             ),
         )
-    return V, b
+    return V, h
 
 
 def plot_incompatible(
     ax: matplotlib.axes.Axes,
     V: sym.Polynomial,
-    b: sym.Polynomial,
+    h: sym.Polynomial,
     x: np.ndarray,
     kappa_V: float,
-    kappa_b: float,
+    kappa_h: float,
 ):
     grid_theta, grid_x2, grid_x_vals = get_grid_pts()
 
     compute_incompatible = (
         examples.nonlinear_toy.incompatibility.ComputeIncompatibility(
-            V, b, x, kappa_V, kappa_b, u_min=-1, u_max=1
+            V, h, x, kappa_V, kappa_h, u_min=-1, u_max=1
         )
     )
 
@@ -282,25 +282,25 @@ def visualize():
         [r"$-\pi$", r"$-\frac{\pi}{2}$", r"0", r"$\frac{\pi}{2}$", r"$\pi$"]
     )
     ax.tick_params(axis="both", which="major", labelsize=14)
-    h_V, h_b, h_compatible = plot_clf_cbf(
-        ax, saved_data["V"], saved_data["b"], x, fill_compatible=True
+    h_V, h_h, h_compatible = plot_clf_cbf(
+        ax, saved_data["V"], saved_data["h"], x, fill_compatible=True
     )
-    h_V_init, h_b_init = plot_clf_cbf_init(ax)
+    h_V_init, h_h_init = plot_clf_cbf_init(ax)
     plot_unsafe_regions(ax)
     h_incompatible = plot_incompatible(  # noqa
         ax,
         saved_data["V"],
-        saved_data["b"][0],
+        saved_data["h"][0],
         x,
         saved_data["kappa_V"],
-        saved_data["kappa_b"][0],
+        saved_data["kappa_h"][0],
     )
     ax.legend(
         [
             h_V.legend_elements()[0][0],
-            h_b.legend_elements()[0][0],
+            h_h.legend_elements()[0][0],
             h_V_init.legend_elements()[0][0],
-            h_b_init.legend_elements()[0][0],
+            h_h_init.legend_elements()[0][0],
         ],
         [r"$V(x)=1$", r"$h(x)=0$", r"$V_{initial}(x)=1$", r"$h_{initial}(x)=0$"],
         prop={"size": 12},
@@ -325,7 +325,7 @@ def main():
         "--unit_test", action="store_true", help="Only turn this on in the unit test."
     )
     args = parser.parse_args()
-    V, b = search(args.unit_test)
+    V, h = search(args.unit_test)
     if not args.unit_test:
         visualize()
 
