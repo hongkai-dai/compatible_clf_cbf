@@ -22,16 +22,16 @@ def main(use_y_squared: bool, with_u_bound: bool):
     else:
         Au = None
         bu = None
-    safety_sets = [
-        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[0] + 10)]), within=None)
-    ]
+    exclude_sets = [clf_cbf.ExcludeSet(np.array([sym.Polynomial(x[0] + 10)]))]
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        safety_sets=safety_sets,
+        exclude_sets=exclude_sets,
+        within_set=None,
         Au=Au,
         bu=bu,
+        num_cbf=1,
         with_clf=True,
         use_y_squared=use_y_squared,
     )
@@ -69,16 +69,17 @@ def main(use_y_squared: bool, with_u_bound: bool):
 
     safety_sets_lagrangian_degrees = [
         clf_cbf.SafetySetLagrangianDegrees(
-            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
-                cbf=0, unsafe_region=[0], state_eq_constraints=None
-            ),
-            within=None,
+            exclude=[
+                clf_cbf.ExcludeRegionLagrangianDegrees(
+                    cbf=0, unsafe_region=[0], state_eq_constraints=None
+                )
+            ],
+            within=[],
         )
     ]
 
     safety_sets_lagrangians = [
         compatible.certify_cbf_safety_set(
-            safety_set_index=0,
             cbf=h_init[0],
             lagrangian_degrees=safety_sets_lagrangian_degrees[0],
             solver_options=None,

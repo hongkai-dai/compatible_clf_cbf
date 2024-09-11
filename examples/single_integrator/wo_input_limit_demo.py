@@ -86,15 +86,16 @@ def certify_clf_cbf_separately(
         ),
     )
     assert clf_lagrangian is not None
-    safety_set = clf_cbf.SafetySet(
-        exclude=get_unsafe_region(x, obstacle_center, obstacle_radius), within=None
-    )
+    exclude_sets = [
+        clf_cbf.ExcludeSet(get_unsafe_region(x, obstacle_center, obstacle_radius))
+    ]
 
     control_barrier = ControlBarrier(
         f=f,
         g=g,
         x=x,
-        safety_set=safety_set,
+        exclude_sets=exclude_sets,
+        within_set=None,
         u_vertices=None,
         state_eq_constraints=None,
     )
@@ -109,10 +110,12 @@ def certify_clf_cbf_separately(
             dhdx_times_f=0, dhdx_times_g=[1, 1], h_plus_eps=0, state_eq_constraints=None
         ),
         clf_cbf.SafetySetLagrangianDegrees(
-            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
-                cbf=0, unsafe_region=[0], state_eq_constraints=None
-            ),
-            within=None,
+            exclude=[
+                clf_cbf.ExcludeRegionLagrangianDegrees(
+                    cbf=0, unsafe_region=[0], state_eq_constraints=None
+                )
+            ],
+            within=[],
         ),
     )
     assert cbf_derivative_lagrangians is not None
@@ -122,9 +125,11 @@ def certify_clf_cbf_separately(
         f=f,
         g=g,
         x=x,
-        safety_sets=[safety_set],
+        exclude_sets=exclude_sets,
+        within_set=None,
         Au=None,
         bu=None,
+        num_cbf=1,
         with_clf=True,
         use_y_squared=True,
         state_eq_constraints=None,

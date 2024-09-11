@@ -63,15 +63,17 @@ class TestCbf:
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_set=clf_cbf.SafetySet(
-                exclude=np.array(
-                    [
-                        sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
-                        sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
-                    ]
-                ),
-                within=None,
-            ),
+            exclude_sets=[
+                clf_cbf.ExcludeSet(
+                    np.array(
+                        [
+                            sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
+                            sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
+                        ]
+                    ),
+                )
+            ],
+            within_set=None,
             u_vertices=None,
             state_eq_constraints=None,
         )
@@ -87,9 +89,12 @@ class TestCbf:
             state_eq_constraints=None,
         )
 
-        poly = dut._add_barrier_exclude_constraint(prog, h, lagrangians)
+        exclude_set_index = 0
+        poly = dut._add_barrier_exclude_constraint(
+            prog, exclude_set_index, h, lagrangians
+        )
         poly_expected = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
-            dut.safety_set.exclude
+            dut.exclude_sets[exclude_set_index].l
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
 
@@ -98,15 +103,17 @@ class TestCbf:
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_set=clf_cbf.SafetySet(
-                exclude=np.array(
-                    [
-                        sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
-                        sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
-                    ]
-                ),
-                within=None,
-            ),
+            exclude_sets=[
+                clf_cbf.ExcludeSet(
+                    np.array(
+                        [
+                            sym.Polynomial(self.x[0] + self.x[1] + self.x[2] + 2),
+                            sym.Polynomial(2 - self.x[0] - self.x[1] - self.x[2]),
+                        ]
+                    )
+                )
+            ],
+            within_set=None,
             u_vertices=None,
             state_eq_constraints=None,
         )

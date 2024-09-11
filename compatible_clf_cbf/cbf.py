@@ -18,9 +18,10 @@ from compatible_clf_cbf.utils import (
 )
 
 from compatible_clf_cbf.clf_cbf import (
-    SafetySet,
+    ExcludeSet,
     SafetySetLagrangians,
     SafetySetLagrangianDegrees,
+    WithinSet,
 )
 import compatible_clf_cbf.clf_cbf as clf_cbf
 
@@ -215,7 +216,8 @@ class ControlBarrier:
         f: np.ndarray,
         g: np.ndarray,
         x: np.ndarray,
-        safety_set: SafetySet,
+        exclude_sets: List[ExcludeSet],
+        within_set: Optional[WithinSet],
         u_vertices: Optional[np.ndarray] = None,
         state_eq_constraints: Optional[np.ndarray] = None
     ):
@@ -230,7 +232,11 @@ class ControlBarrier:
           x: np.ndarray
             An array of symbolic variables representing the state.
             The shape is (nx,)
-          safety_set: describes the exclude region and the within region.
+          exclude_sets: List[ExcludeSet]
+            A list of "unsafe sets", namely the union of these ExcludeSet is the
+            unsafe region.
+          within_set: Optional[WithinSet]
+            If not None, then the state has to be within this `within_set`.
           u_vertices: The vertices of the input constraint polytope 𝒰. Each row
             is a vertex. If u_vertices=None, then the input is unconstrained.
           state_eq_constraints: An array of polynomials. Some dynamical systems
@@ -253,7 +259,8 @@ class ControlBarrier:
         self.x_set: sym.Variables = sym.Variables(x)
         check_array_of_polynomials(f, self.x_set)
         check_array_of_polynomials(g, self.x_set)
-        self.safety_set = safety_set
+        self.exclude_sets = exclude_sets
+        self.within_set = within_set
         if u_vertices is not None:
             assert u_vertices.shape[1] == self.nu
         self.u_vertices = u_vertices
@@ -281,27 +288,30 @@ class ControlBarrier:
         For a given CBF candidate, certify the CBF conditions by finding the
         Lagrangian multipliers.
         """
-        if self.safety_set.exclude is not None:
+
+        safety_set_lagrangians_result = None
+        exclude_lagrangians_result = [None] * len(self.exclude_sets)
+        for i in range(len(self.exclude_sets)):
             prog_exclude = solvers.MathematicalProgram()
             prog_exclude.AddIndeterminates(self.x_set)
-            exclude_lagrangians = safety_set_lagrangian_degrees.exclude.to_lagrangians(
-                prog_exclude, self.x_set
+            exclude_lagrangians = safety_set_lagrangian_degrees.exclude[
+                i
+            ].to_lagrangians(prog_exclude, self.x_set)
+            self._add_barrier_exclude_constraint(
+                prog_exclude, i, h, exclude_lagrangians
             )
-            self._add_barrier_exclude_constraint(prog_exclude, h, exclude_lagrangians)
             result_exclude = solve_with_id(prog_exclude, solver_id, solver_options)
             if result_exclude.is_success():
-                exclude_lagrangians_result = exclude_lagrangians.get_result(
+                exclude_lagrangians_result[i] = exclude_lagrangians.get_result(
                     result_exclude, lagrangian_coefficient_tol
                 )
-        else:
-            exclude_lagrangians_result = None
 
-        within_lagrangians_result: Optional[
-            List[Optional[clf_cbf.WithinRegionLagrangians]]
-        ] = None
-        if self.safety_set.within is not None:
-            within_lagrangians_result = [None] * (self.safety_set.within.size)
-            for i in range(self.safety_set.within.size):
+        within_lagrangians_result: List[Optional[clf_cbf.WithinRegionLagrangians]] = (
+            [None] * len(self.within_set.l) if self.within_set is not None else []
+        )
+        if self.within_set is not None:
+            within_lagrangians_result = [None] * (self.within_set.l.size)
+            for i in range(self.within_set.l.size):
                 prog_within = solvers.MathematicalProgram()
                 prog_within.AddIndeterminates(self.x_set)
                 within_lagrangians = safety_set_lagrangian_degrees.within[
@@ -315,10 +325,10 @@ class ControlBarrier:
                     within_lagrangians_result[i] = within_lagrangians.get_result(
                         result_within, lagrangian_coefficient_tol
                     )
-
-        safety_set_lagrangians_result = clf_cbf.SafetySetLagrangians(
-            exclude=exclude_lagrangians_result, within=within_lagrangians_result
-        )
+        if all(exclude_lagrangians_result) and all(within_lagrangians_result):
+            safety_set_lagrangians_result = clf_cbf.SafetySetLagrangians(
+                exclude=exclude_lagrangians_result, within=within_lagrangians_result
+            )
 
         prog_cbf_derivative = solvers.MathematicalProgram()
         prog_cbf_derivative.AddIndeterminates(self.x_set)
@@ -360,9 +370,9 @@ class ControlBarrier:
         Args:
           safe_region_index: pᵢ(x) = self.safety_set.within[within_index]
         """
-        assert self.safety_set.within is not None
+        assert self.within_set is not None
         poly = (
-            -(1 + lagrangians.safe_region) * self.safety_set.within[within_index]
+            -(1 + lagrangians.safe_region) * self.within_set.l[within_index]
             - lagrangians.cbf * h
         )
         if self.state_eq_constraints is not None:
@@ -374,12 +384,13 @@ class ControlBarrier:
     def _add_barrier_exclude_constraint(
         self,
         prog: solvers.MathematicalProgram,
+        exclude_set_index: int,
         h: sym.Polynomial,
         lagrangians: clf_cbf.ExcludeRegionLagrangians,
     ) -> sym.Polynomial:
         """
         Adds the constraint that the 0-superlevel set of the barrier function
-        does not intersect with the unsafe region.
+        does not intersect with the unsafe region self.exclude_sets[exclude_set_index].
         Since the i'th unsafe regions is defined as the 0-sublevel set of
         polynomials p(x), we want to certify that the set {x|p(x)≤0, h(x)≥0}
         is empty.
@@ -399,7 +410,7 @@ class ControlBarrier:
           poly: poly is the polynomial -(1+ϕ₀(x))hᵢ(x) + ∑ⱼϕⱼ(x)pⱼ(x)
         """
         poly = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
-            self.safety_set.exclude
+            self.exclude_sets[exclude_set_index].l
         )
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
