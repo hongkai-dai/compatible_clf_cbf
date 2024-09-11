@@ -162,17 +162,13 @@ class TestClfCbf(object):
                 [sym.Polynomial(cls.x[0] * cls.x[2]), sym.Polynomial(cls.x[1])],
             ]
         )
-        cls.safety_sets = [
-            mut.SafetySet(
-                exclude=np.array([sym.Polynomial(cls.x[0] + 1)]), within=None
-            ),
-            mut.SafetySet(
-                exclude=np.array(
-                    [sym.Polynomial(1 - cls.x[1]), sym.Polynomial(1 - cls.x[0])]
-                ),
-                within=None,
+        cls.exclude_sets = [
+            mut.ExcludeSet(np.array([sym.Polynomial(cls.x[0] + 1)])),
+            mut.ExcludeSet(
+                np.array([sym.Polynomial(1 - cls.x[1]), sym.Polynomial(1 - cls.x[0])])
             ),
         ]
+        cls.within_set = None
 
     def linearize(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -195,9 +191,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=1,
             with_clf=True,
             use_y_squared=True,
         )
@@ -210,7 +208,7 @@ class TestClfCbf(object):
             for y_squared_poly_i, y_i in zip(cls.y_squared_poly.flat, cls.y.flat):
                 assert y_squared_poly_i.EqualTo(sym.Polynomial(y_i**2))
 
-        assert dut.y.shape == (len(self.safety_sets) + 1,)
+        assert dut.y.shape == (dut.num_cbf + 1,)
         check_members(dut)
 
         # Now construct with with_clf=False
@@ -218,13 +216,15 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=1,
             with_clf=False,
             use_y_squared=True,
         )
-        assert dut.y.shape == (len(self.safety_sets),)
+        assert dut.y.shape == (dut.num_cbf,)
         check_members(dut)
 
         # Now construct with Au and bu
@@ -232,9 +232,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=np.array([[-3, -2], [1.0, 4.0], [0.0, 3.0]]),
             bu=np.array([4, 5.0, 6.0]),
+            num_cbf=2,
             with_clf=False,
             use_y_squared=True,
         )
@@ -242,7 +244,7 @@ class TestClfCbf(object):
         assert dut.Au.shape == (3, self.nu)
         assert dut.bu is not None
         assert dut.bu.shape == (3,)
-        assert dut.y.shape == (len(self.safety_sets) + dut.Au.shape[0],)
+        assert dut.y.shape == (dut.num_cbf + dut.Au.shape[0],)
         check_members(dut)
 
         # Now construct with Au, bu and with_clf=True
@@ -250,9 +252,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=np.array([[-3, -2], [1, 4], [3, -1.0]]),
             bu=np.array([4, 5.0, 6.0]),
+            num_cbf=1,
             with_clf=True,
             use_y_squared=True,
         )
@@ -260,7 +264,7 @@ class TestClfCbf(object):
         assert dut.Au.shape == (3, self.nu)
         assert dut.bu is not None
         assert dut.bu.shape == (3,)
-        assert dut.y.shape == (len(self.safety_sets) + 1 + dut.Au.shape[0],)
+        assert dut.y.shape == (dut.num_cbf + 1 + dut.Au.shape[0],)
         check_members(dut)
 
     def test_calc_xi_Lambda_w_clf(self):
@@ -271,9 +275,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=2,
             with_clf=True,
             use_y_squared=True,
         )
@@ -289,8 +295,8 @@ class TestClfCbf(object):
         kappa_V = 0.01
         kappa_h = np.array([0.02, 0.03])
         xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
-        assert xi.shape == (1 + len(self.safety_sets),)
-        assert lambda_mat.shape == (1 + len(self.safety_sets), dut.nu)
+        assert xi.shape == (1 + dut.num_cbf,)
+        assert lambda_mat.shape == (1 + dut.num_cbf, dut.nu)
         dhdx = np.empty((2, 3), dtype=object)
         dhdx[0] = h[0].Jacobian(self.x)
         dhdx[1] = h[1].Jacobian(self.x)
@@ -314,9 +320,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=2,
             with_clf=False,
             use_y_squared=True,
         )
@@ -330,8 +338,8 @@ class TestClfCbf(object):
         kappa_V = None
         kappa_h = np.array([0.02, 0.03])
         xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
-        assert xi.shape == (len(self.safety_sets),)
-        assert lambda_mat.shape == (len(self.safety_sets), dut.nu)
+        assert xi.shape == (dut.num_cbf,)
+        assert lambda_mat.shape == (dut.num_cbf, dut.nu)
         dhdx = np.empty((2, 3), dtype=object)
         dhdx[0] = h[0].Jacobian(self.x)
         dhdx[1] = h[1].Jacobian(self.x)
@@ -352,9 +360,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=np.array([[-3, 2], [1, 4], [3, 8.0]]),
             bu=np.array([3.0, 5.0, 10.0]),
+            num_cbf=2,
             with_clf=True,
             use_y_squared=True,
         )
@@ -416,9 +426,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=2,
             with_clf=True,
             use_y_squared=True,
         )
@@ -440,7 +452,7 @@ class TestClfCbf(object):
             rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=4, y=2),
             h_plus_eps=[
                 mut.CompatibleLagrangianDegrees.Degree(x=4, y=2)
-                for _ in range(len(self.safety_sets))
+                for _ in range(dut.num_cbf)
             ],
             state_eq_constraints=None,
         )
@@ -458,9 +470,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=2,
             with_clf=True,
             use_y_squared=True,
         )
@@ -485,10 +499,7 @@ class TestClfCbf(object):
         y_lagrangian = None
         rho_minus_V_lagrangian, _ = prog.NewSosPolynomial(dut.xy_set, degree=2)
         h_plus_eps_lagrangian = np.array(
-            [
-                prog.NewSosPolynomial(dut.xy_set, degree=2)[0]
-                for _ in range(len(dut.safety_sets))
-            ]
+            [prog.NewSosPolynomial(dut.xy_set, degree=2)[0] for _ in range(dut.num_cbf)]
         )
         lagrangians = mut.CompatibleLagrangians(
             lambda_y=lambda_y_lagrangian,
@@ -530,9 +541,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=2,
             with_clf=True,
             use_y_squared=True,
         )
@@ -540,7 +553,7 @@ class TestClfCbf(object):
         prog = solvers.MathematicalProgram()
         prog.AddIndeterminates(self.x)
 
-        safety_set_index = 0
+        exclude_set_index = 0
         h = sym.Polynomial(1 + 2 * self.x[0] * self.x[1])
         lagrangians = mut.ExcludeRegionLagrangians(
             cbf=sym.Polynomial(1 + self.x[0]),
@@ -549,10 +562,10 @@ class TestClfCbf(object):
         )
 
         poly = dut._add_barrier_exclude_constraint(
-            prog, safety_set_index, h, lagrangians
+            prog, exclude_set_index, h, lagrangians
         )
         poly_expected = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
-            dut.safety_sets[safety_set_index].exclude
+            dut.exclude_sets[exclude_set_index].l
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
 
@@ -561,9 +574,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=2,
             with_clf=True,
             use_y_squared=True,
         )
@@ -579,7 +594,7 @@ class TestClfCbf(object):
         )
         assert lagrangians is not None
         assert utils.is_sos(lagrangians.cbf)
-        for i in range(dut.safety_sets[0].exclude.size):
+        for i in range(dut.exclude_sets[0].l.size):
             assert utils.is_sos(lagrangians.unsafe_region[i])
 
     def test_find_max_inner_ellipsoid(self):
@@ -587,9 +602,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=1,
             with_clf=True,
             use_y_squared=True,
         )
@@ -645,9 +662,11 @@ class TestClfCbf(object):
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=1,
             with_clf=True,
             use_y_squared=True,
         )
@@ -691,11 +710,8 @@ class TestClfCbfToy:
         )
         cls.g = np.array([[sym.Polynomial(1)], [sym.Polynomial(-1)]])
 
-        cls.safety_sets = [
-            mut.SafetySet(
-                exclude=np.array([sym.Polynomial(cls.x[0] + 10)]), within=None
-            )
-        ]
+        cls.exclude_sets = [mut.ExcludeSet(np.array([sym.Polynomial(cls.x[0] + 10)]))]
+        cls.within_set = None
 
         cls.kappa_V = 0.001
         cls.kappa_h = np.array([cls.kappa_V])
@@ -704,7 +720,7 @@ class TestClfCbfToy:
     def check_unsafe_region_by_sample(self, h: np.ndarray, x_samples):
         # Sample many points, make sure that {x | h[i] >= 0} doesn't intersect
         # with the i'th unsafe region.
-        for i, safety_set in enumerate(self.safety_sets):
+        for i, exclude_set in enumerate(self.exclude_sets):
             unsafe_flag = np.all(
                 np.concatenate(
                     [
@@ -712,7 +728,7 @@ class TestClfCbfToy:
                             unsafe_region_j.EvaluateIndeterminates(self.x, x_samples.T)
                             <= 0
                         ).reshape((-1, 1))
-                        for unsafe_region_j in safety_set.exclude
+                        for unsafe_region_j in exclude_set.l
                     ],
                     axis=1,
                 ),
@@ -737,9 +753,11 @@ class TestClfCbfToy:
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=1,
             with_clf=True,
             use_y_squared=use_y_squared,
         )
@@ -778,12 +796,11 @@ class TestClfCbfToy:
         )
         safety_sets_lagrangian_degrees = [
             mut.SafetySetLagrangianDegrees(
-                exclude=exclude_region_lagrangian_degrees, within=None
+                exclude=[exclude_region_lagrangian_degrees], within=[]
             )
         ]
 
         safety_sets_lagrangians = dut.certify_cbf_safety_set(
-            safety_set_index=0,
             cbf=h_init[0],
             lagrangian_degrees=safety_sets_lagrangian_degrees[0],
             solver_options=None,
@@ -1062,12 +1079,12 @@ class TestClfCbfWStateEqConstraints:
                 [sym.Polynomial(-1)],
             ]
         )
-        cls.safety_sets = [
-            mut.SafetySet(
-                exclude=np.array([sym.Polynomial(cls.x[0] + cls.x[1] + cls.x[2] + 3)]),
-                within=None,
+        cls.exclude_sets = [
+            mut.ExcludeSet(
+                np.array([sym.Polynomial(cls.x[0] + cls.x[1] + cls.x[2] + 3)])
             )
         ]
+        cls.within_set = None
         cls.state_eq_constraints = np.array(
             [sym.Polynomial(cls.x[0] ** 2 + cls.x[1] ** 2 + 2 * cls.x[1])]
         )
@@ -1089,9 +1106,11 @@ class TestClfCbfWStateEqConstraints:
             f=self.f,
             g=self.g,
             x=self.x,
-            safety_sets=self.safety_sets,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
             Au=None,
             bu=None,
+            num_cbf=1,
             with_clf=True,
             use_y_squared=use_y_squared,
             state_eq_constraints=self.state_eq_constraints,
@@ -1134,13 +1153,12 @@ class TestClfCbfWStateEqConstraints:
         )
         safety_sets_lagrangian_degrees = [
             mut.SafetySetLagrangianDegrees(
-                exclude=exclude_region_lagrangian_degrees, within=None
+                exclude=[exclude_region_lagrangian_degrees], within=[]
             )
         ]
 
         safety_sets_lagrangians = [
             dut.certify_cbf_safety_set(
-                safety_set_index=0,
                 cbf=h_init[0],
                 lagrangian_degrees=safety_sets_lagrangian_degrees[0],
                 solver_options=None,
@@ -1149,13 +1167,13 @@ class TestClfCbfWStateEqConstraints:
         assert safety_sets_lagrangians[0] is not None
         if check_result:
             assert utils.is_sos(
-                -(1 + safety_sets_lagrangians[0].exclude.cbf) * h_init[0]
-                + safety_sets_lagrangians[0].exclude.unsafe_region.dot(
-                    self.safety_sets[0].exclude
-                )
-                - safety_sets_lagrangians[0].exclude.state_eq_constraints.dot(
-                    self.state_eq_constraints
-                )
+                -(1 + safety_sets_lagrangians[0].exclude[0].cbf) * h_init[0]
+                + safety_sets_lagrangians[0]
+                .exclude[0]
+                .unsafe_region.dot(self.exclude_sets[0].l)
+                - safety_sets_lagrangians[0]
+                .exclude[0]
+                .state_eq_constraints.dot(self.state_eq_constraints)
             )
         return (
             dut,

@@ -56,13 +56,15 @@ def search_barrier_safe_lagrangians(
 ) -> List[clf_cbf.SafetySetLagrangians]:
     lagrangian_degrees = [
         clf_cbf.SafetySetLagrangianDegrees(
-            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
-                cbf=2, unsafe_region=[2], state_eq_constraints=None
-            ),
-            within=None,
+            exclude=[
+                clf_cbf.ExcludeRegionLagrangianDegrees(
+                    cbf=2, unsafe_region=[2], state_eq_constraints=None
+                )
+            ],
+            within=[],
         )
     ]
-    lagrangians = dut.certify_cbf_safety_set(0, h[0], lagrangian_degrees[0])
+    lagrangians = dut.certify_cbf_safety_set(h[0], lagrangian_degrees[0])
     assert lagrangians is not None
     return [lagrangians]
 
@@ -102,10 +104,9 @@ def search():
 
     # Use an arbitrary unsafe region
     alpha = 0.5
-    safety_sets = [
-        clf_cbf.SafetySet(
-            exclude=np.array([1.1 * alpha - sym.Polynomial(x.dot(S_lqr @ x))]),
-            within=None,
+    exclude_sets = [
+        clf_cbf.ExcludeSet(
+            np.array([1.1 * alpha - sym.Polynomial(x.dot(S_lqr @ x))]),
         )
     ]
 
@@ -116,9 +117,11 @@ def search():
         f=f,
         g=g,
         x=x,
-        safety_sets=safety_sets,
+        exclude_sets=exclude_sets,
+        within_set=None,
         Au=Au,
         bu=bu,
+        num_cbf=1,
         with_clf=True,
         use_y_squared=True,
     )

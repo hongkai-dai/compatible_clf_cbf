@@ -69,26 +69,26 @@ def search(use_y_squared: bool):
     x = sym.MakeVectorContinuousVariable(3, "x")
     f, g = plant.affine_dynamics(x)
 
-    safety_sets = [
-        clf_cbf.SafetySet(
-            exclude=None,
-            within=np.array(
-                [
-                    sym.Polynomial(x[0] - 0.2),
-                    sym.Polynomial(-x[0] - 0.8),
-                    sym.Polynomial(((x[1] - 0.001) ** 2) + x[2] ** 2 - 1.2**2),
-                ]
-            ),
+    exclude_sets = []
+    within_set = clf_cbf.WithinSet(
+        np.array(
+            [
+                sym.Polynomial(x[0] - 0.2),
+                sym.Polynomial(-x[0] - 0.8),
+                sym.Polynomial(((x[1] - 0.001) ** 2) + x[2] ** 2 - 1.2**2),
+            ]
         )
-    ]
+    )
 
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        safety_sets=safety_sets,
+        exclude_sets=exclude_sets,
+        within_set=within_set,
         Au=None,
         bu=None,
+        num_cbf=1,
         with_clf=True,
         use_y_squared=use_y_squared,
     )
@@ -122,7 +122,7 @@ def search(use_y_squared: bool):
 
     safety_sets_lagrangian_degrees = [
         clf_cbf.SafetySetLagrangianDegrees(
-            exclude=None,
+            exclude=[],
             within=[
                 clf_cbf.WithinRegionLagrangianDegrees(
                     cbf=0, safe_region=0, state_eq_constraints=None

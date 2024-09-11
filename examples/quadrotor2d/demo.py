@@ -30,17 +30,17 @@ def main(use_y_squared: bool, with_u_bound: bool):
         Au, bu = None, None
 
     # Ground as the unsafe region.
-    safety_sets = [
-        clf_cbf.SafetySet(exclude=np.array([sym.Polynomial(x[1] + 0.5)]), within=None)
-    ]
+    exclude_sets = [clf_cbf.ExcludeSet(np.array([sym.Polynomial(x[1] + 0.5)]))]
     state_eq_constraints = quadrotor.equality_constraint(x)
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
-        safety_sets=safety_sets,
+        exclude_sets=exclude_sets,
+        within_set=None,
         Au=Au,
         bu=bu,
+        num_cbf=1,
         with_clf=True,
         use_y_squared=use_y_squared,
         state_eq_constraints=state_eq_constraints,
@@ -77,10 +77,12 @@ def main(use_y_squared: bool, with_u_bound: bool):
     )
     safety_sets_lagrangian_degrees = [
         clf_cbf.SafetySetLagrangianDegrees(
-            exclude=clf_cbf.ExcludeRegionLagrangianDegrees(
-                cbf=0, unsafe_region=[0], state_eq_constraints=[0]
-            ),
-            within=None,
+            exclude=[
+                clf_cbf.ExcludeRegionLagrangianDegrees(
+                    cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+                )
+            ],
+            within=[],
         )
     ]
     barrier_eps = np.array([0.000])
