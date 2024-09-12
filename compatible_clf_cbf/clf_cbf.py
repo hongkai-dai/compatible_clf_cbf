@@ -1,3 +1,13 @@
+"""
+Verifying and synthesizing compatible CLF/CBF.
+
+Reference:
+Verification and Synthesis of Compatible Control Lyapunov and Control Barrier
+Functions
+Hongkai Dai*, Chuanrui Jiang*, Hongchao Zhang and Andrew Clark.
+IEEE Conference on Decision and Control (CDC), 2024
+"""
+
 from dataclasses import dataclass
 import os
 import os.path
@@ -1195,8 +1205,11 @@ class CompatibleClfCbf:
         Our goal is to find the compatible CLF and CBFs with the largest compatible
         region. We cannot measure the volume of the compatible region directly, so we
         use one of the following heuristics to grow the compatible region:
-        - Grow the inscribed ellipsoid within the compatible region.
-        - Expand the compatible region to cover some candidate states.
+        1. Grow the inscribed ellipsoid within the compatible region.
+        2. Expand the compatible region to cover some candidate states.
+
+        I strongly recommend using heuristics 2 (covering candidate states)
+        instead of 1 (grow the inscribed ellipsoid).
 
         Args:
           max_iter: The maximal number of bilinear alternation iterations.
@@ -1212,6 +1225,12 @@ class CompatibleClfCbf:
         ) or (inner_ellipsoid_options is None and compatible_states_options is not None)
         if inner_ellipsoid_options is not None:
             assert binary_search_scale_options is not None
+            raise Warning(
+                "inner_ellipsoid_options isn't None. This will grow the "
+                "inscribed ellipsoid. I strongly recommend to use the other "
+                "heuristics to cover candidate states, by setting "
+                "compatible_states_options."
+            )
         assert isinstance(binary_search_scale_options, Optional[BinarySearchOptions])
         assert isinstance(compatible_states_options, Optional[CompatibleStatesOptions])
 
