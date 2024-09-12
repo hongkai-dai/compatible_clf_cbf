@@ -1,6 +1,11 @@
 # Compatible CLF and CBFs
 Verifying and synthesizing compatible Control Lyapunov Function (CLF) and Control Barrier Function (CBF) through Sum-of-Squares.
 
+# References
+- [Verification and Synthesis of Compatible Control Lyapunov and Control Barrier Functions](https://arxiv.org/pdf/2406.18914) <br>
+   Hongkai Dai*, Chuanrui Jiang*, Hongchao Zhang and Andrew Clark <br>
+   IEEE Conference on Decision and Control (CDC), 2024
+
 # Background
 For a continuous-time control affine system
 $$\dot{x} = f(x) + g(x)u, u\in\mathcal{U},$$
@@ -21,13 +26,18 @@ $\kappa_h>0$ is a given constant.
 ## Compatible CLF/CBF
 We say a CLF $V(x)$ is compatible with a CBF $h(x)$ if there exists a common action $u$ that satisfies both the CLF condition and the CBF condition simultaneously
 
-$$\exists u\in\mathcal{U} \begin{cases}L_fV(x)+L_gV(x)u\leq -\kappa_VV(x)\\
+$$\exists u\in\mathcal{U}, \begin{cases}L_fV(x)+L_gV(x)u\leq -\kappa_VV(x)\\
  L_fh(x)+L_gh(x)u\geq-\kappa_hh(x)\end{cases}.$$
 
 We will certify and synthesize such compatible CLF and CBFs through Sum-of-Squares optimization.
 
 # Getting started
 ## Installation
+Create a virtual environment.
+```
+$ python -m venv venv
+$ source venv/bin/activate
+```
 Run
 ```
 $ pip install -e .
