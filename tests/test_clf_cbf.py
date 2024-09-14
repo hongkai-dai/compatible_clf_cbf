@@ -1,6 +1,6 @@
 import compatible_clf_cbf.clf_cbf as mut
 
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 import pytest  # noqa
@@ -554,9 +554,9 @@ class TestClfCbf(object):
         prog.AddIndeterminates(self.x)
 
         exclude_set_index = 0
-        h = sym.Polynomial(1 + 2 * self.x[0] * self.x[1])
+        h = np.array([sym.Polynomial(1 + 2 * self.x[0] * self.x[1])])
         lagrangians = mut.ExcludeRegionLagrangians(
-            cbf=sym.Polynomial(1 + self.x[0]),
+            cbf=np.array([sym.Polynomial(1 + self.x[0])]),
             unsafe_region=np.array([sym.Polynomial(2 + self.x[0])]),
             state_eq_constraints=None,
         )
@@ -564,9 +564,9 @@ class TestClfCbf(object):
         poly = dut._add_barrier_exclude_constraint(
             prog, exclude_set_index, h, lagrangians
         )
-        poly_expected = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
-            dut.exclude_sets[exclude_set_index].l
-        )
+        poly_expected = -(
+            1 + lagrangians.cbf[0] * h[0]
+        ) + lagrangians.unsafe_region.dot(dut.exclude_sets[exclude_set_index].l)
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)
 
     def test_certify_cbf_exclude(self):
@@ -578,22 +578,22 @@ class TestClfCbf(object):
             within_set=self.within_set,
             Au=None,
             bu=None,
-            num_cbf=2,
+            num_cbf=1,
             with_clf=True,
             use_y_squared=True,
         )
 
         cbf = sym.Polynomial(1 - self.x.dot(self.x))
         exclude_region_lagrangian_degrees = mut.ExcludeRegionLagrangianDegrees(
-            cbf=2, unsafe_region=[2], state_eq_constraints=None
+            cbf=[2], unsafe_region=[2], state_eq_constraints=None
         )
         lagrangians = dut.certify_cbf_exclude(
             0,
-            cbf,
+            np.array([cbf]),
             exclude_region_lagrangian_degrees,
         )
         assert lagrangians is not None
-        assert utils.is_sos(lagrangians.cbf)
+        assert utils.is_sos(lagrangians.cbf[0])
         for i in range(dut.exclude_sets[0].l.size):
             assert utils.is_sos(lagrangians.unsafe_region[i])
 
@@ -743,8 +743,8 @@ class TestClfCbfToy:
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
         mut.CompatibleLagrangianDegrees,
-        List[mut.SafetySetLagrangians],
-        List[mut.SafetySetLagrangianDegrees],
+        mut.SafetySetLagrangians,
+        mut.SafetySetLagrangianDegrees,
         sym.Polynomial,
         np.ndarray,
     ]:
@@ -792,17 +792,15 @@ class TestClfCbfToy:
             compatible_result, coefficient_tol=1e-5
         )
         exclude_region_lagrangian_degrees = mut.ExcludeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[0], state_eq_constraints=None
+            cbf=[0], unsafe_region=[0], state_eq_constraints=None
         )
-        safety_sets_lagrangian_degrees = [
-            mut.SafetySetLagrangianDegrees(
-                exclude=[exclude_region_lagrangian_degrees], within=[]
-            )
-        ]
+        safety_sets_lagrangian_degrees = mut.SafetySetLagrangianDegrees(
+            exclude=[exclude_region_lagrangian_degrees], within=[]
+        )
 
         safety_sets_lagrangians = dut.certify_cbf_safety_set(
-            cbf=h_init[0],
-            lagrangian_degrees=safety_sets_lagrangian_degrees[0],
+            h=h_init,
+            lagrangian_degrees=safety_sets_lagrangian_degrees,
             solver_options=None,
         )
 
@@ -812,7 +810,7 @@ class TestClfCbfToy:
             dut,
             compatible_lagrangians_result,
             lagrangian_degrees,
-            [safety_sets_lagrangians],
+            safety_sets_lagrangians,
             safety_sets_lagrangian_degrees,
             V_init,
             h_init,
@@ -1096,8 +1094,8 @@ class TestClfCbfWStateEqConstraints:
         mut.CompatibleClfCbf,
         mut.CompatibleLagrangians,
         mut.CompatibleLagrangianDegrees,
-        List[mut.SafetySetLagrangians],
-        List[mut.SafetySetLagrangianDegrees],
+        mut.SafetySetLagrangians,
+        mut.SafetySetLagrangianDegrees,
         sym.Polynomial,
         np.ndarray,
     ]:
@@ -1149,31 +1147,29 @@ class TestClfCbfWStateEqConstraints:
         )
 
         exclude_region_lagrangian_degrees = mut.ExcludeRegionLagrangianDegrees(
-            cbf=0, unsafe_region=[0], state_eq_constraints=[0]
+            cbf=[0], unsafe_region=[0], state_eq_constraints=[0]
         )
-        safety_sets_lagrangian_degrees = [
-            mut.SafetySetLagrangianDegrees(
-                exclude=[exclude_region_lagrangian_degrees], within=[]
-            )
-        ]
+        safety_sets_lagrangian_degrees = mut.SafetySetLagrangianDegrees(
+            exclude=[exclude_region_lagrangian_degrees], within=[]
+        )
 
-        safety_sets_lagrangians = [
-            dut.certify_cbf_safety_set(
-                cbf=h_init[0],
-                lagrangian_degrees=safety_sets_lagrangian_degrees[0],
-                solver_options=None,
-            )
-        ]
-        assert safety_sets_lagrangians[0] is not None
+        safety_sets_lagrangians = dut.certify_cbf_safety_set(
+            h=h_init,
+            lagrangian_degrees=safety_sets_lagrangian_degrees,
+            solver_options=None,
+        )
+
+        assert safety_sets_lagrangians is not None
         if check_result:
             assert utils.is_sos(
-                -(1 + safety_sets_lagrangians[0].exclude[0].cbf) * h_init[0]
-                + safety_sets_lagrangians[0]
-                .exclude[0]
-                .unsafe_region.dot(self.exclude_sets[0].l)
-                - safety_sets_lagrangians[0]
-                .exclude[0]
-                .state_eq_constraints.dot(self.state_eq_constraints)
+                -1
+                - safety_sets_lagrangians.exclude[0].cbf.dot(h_init)
+                + safety_sets_lagrangians.exclude[0].unsafe_region.dot(
+                    self.exclude_sets[0].l
+                )
+                - safety_sets_lagrangians.exclude[0].state_eq_constraints.dot(
+                    self.state_eq_constraints
+                )
             )
         return (
             dut,

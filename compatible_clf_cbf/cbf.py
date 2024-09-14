@@ -361,19 +361,19 @@ class ControlBarrier:
         """
         Adds the constraint that the 0-super level set of the barrier function
         is in the safe region {x | pᵢ(x) <= 0}.
-        −(1+ϕ₀(x))pᵢ(x) − ϕ₁(x)h(x) is sos.
+        −(1+ϕ₀(x))pᵢ(x) − ∑ᵢψᵢ(x)h(x) is sos.
 
         Note it doesn't add the constraints
-        ϕ₀(x) is sos
-        ϕ₁(x) is sos.
+        ϕ₀(x) is sos, ψᵢ(x) is sos.
 
         Args:
           safe_region_index: pᵢ(x) = self.safety_set.within[within_index]
         """
         assert self.within_set is not None
+        assert lagrangians.cbf.size == 1
         poly = (
             -(1 + lagrangians.safe_region) * self.within_set.l[within_index]
-            - lagrangians.cbf * h
+            - lagrangians.cbf[0] * h
         )
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
@@ -395,12 +395,12 @@ class ControlBarrier:
         polynomials p(x), we want to certify that the set {x|p(x)≤0, h(x)≥0}
         is empty.
         The emptiness of the set can be certified by the constraint
-        -(1+ϕ₀(x))h(x) +∑ⱼϕⱼ(x)pⱼ(x) is sos
-        ϕ₀(x), ϕⱼ(x) are sos.
+        -∑ᵢϕᵢ(x))*hᵢ(x) +∑ⱼψⱼ(x)pⱼ(x)-1 is sos
+        ϕᵢ(x), ψⱼ(x) are sos.
 
         Note that this function only adds the constraint
-        -(1+ϕ₀(x))*hᵢ(x) +∑ⱼϕⱼ(x)pⱼ(x) is sos
-        It doesn't add the constraint ϕ₀(x), ϕⱼ(x) are sos.
+        -(1+ϕᵢ,₀(x))*hᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        It doesn't add the constraint ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
 
         Args:
           h: a polynomial, h is the barrier function for the
@@ -409,7 +409,8 @@ class ControlBarrier:
         Returns:
           poly: poly is the polynomial -(1+ϕ₀(x))hᵢ(x) + ∑ⱼϕⱼ(x)pⱼ(x)
         """
-        poly = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
+        assert lagrangians.cbf.size == 1
+        poly = -(1 + lagrangians.cbf[0]) * h + lagrangians.unsafe_region.dot(
             self.exclude_sets[exclude_set_index].l
         )
         if self.state_eq_constraints is not None:

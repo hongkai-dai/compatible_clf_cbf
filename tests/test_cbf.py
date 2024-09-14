@@ -82,7 +82,7 @@ class TestCbf:
         prog.AddIndeterminates(dut.x_set)
 
         lagrangians = ExcludeRegionLagrangians(
-            cbf=sym.Polynomial(1 + self.x[0]),
+            cbf=np.array([sym.Polynomial(1 + self.x[0])]),
             unsafe_region=np.array(
                 [sym.Polynomial(2 + self.x[0]), sym.Polynomial(3 - self.x[1])]
             ),
@@ -93,7 +93,7 @@ class TestCbf:
         poly = dut._add_barrier_exclude_constraint(
             prog, exclude_set_index, h, lagrangians
         )
-        poly_expected = -(1 + lagrangians.cbf) * h + lagrangians.unsafe_region.dot(
+        poly_expected = -(1 + lagrangians.cbf[0]) * h + lagrangians.unsafe_region.dot(
             dut.exclude_sets[exclude_set_index].l
         )
         assert poly.CoefficientsAlmostEqual(poly_expected, 1e-8)

@@ -49,16 +49,15 @@ def main(with_u_bound: bool):
         h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=None,
     )
-    safety_sets_lagrangian_degrees = [
-        clf_cbf.SafetySetLagrangianDegrees(
-            exclude=[
-                clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=0, unsafe_region=[0], state_eq_constraints=None
-                )
-            ],
-            within=[],
-        )
-    ]
+    safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
+        exclude=[
+            clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=[0], unsafe_region=[0], state_eq_constraints=None
+            )
+        ],
+        within=[],
+    )
+
     x_equilibrium = np.array([0.0, 0.0])
 
     clf_degree = 2

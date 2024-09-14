@@ -57,13 +57,13 @@ def search_barrier_safe_lagrangians(
         clf_cbf.SafetySetLagrangianDegrees(
             exclude=[
                 clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=2, unsafe_region=[2], state_eq_constraints=None
+                    cbf=[2], unsafe_region=[2], state_eq_constraints=None
                 )
             ],
             within=[],
         )
     ]
-    lagrangians = dut.certify_cbf_safety_set(h[0], lagrangian_degrees[0])
+    lagrangians = dut.certify_cbf_safety_set(h, lagrangian_degrees[0])
     assert lagrangians is not None
     return [lagrangians]
 

@@ -120,17 +120,16 @@ def search(use_y_squared: bool):
         state_eq_constraints=None,
     )
 
-    safety_sets_lagrangian_degrees = [
-        clf_cbf.SafetySetLagrangianDegrees(
-            exclude=[],
-            within=[
-                clf_cbf.WithinRegionLagrangianDegrees(
-                    cbf=0, safe_region=0, state_eq_constraints=None
-                )
-                for _ in range(3)
-            ],
-        )
-    ]
+    safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
+        exclude=[],
+        within=[
+            clf_cbf.WithinRegionLagrangianDegrees(
+                cbf=[0], safe_region=0, state_eq_constraints=None
+            )
+            for _ in range(3)
+        ],
+    )
+
     barrier_eps = np.array([0.0])
     x_equilibrium = np.zeros((3,))
 
