@@ -71,7 +71,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         clf_cbf.SafetySetLagrangianDegrees(
             exclude=[
                 clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=0, unsafe_region=[0], state_eq_constraints=None
+                    cbf=[0], unsafe_region=[0], state_eq_constraints=None
                 )
             ],
             within=[],
@@ -80,7 +80,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
 
     safety_sets_lagrangians = [
         compatible.certify_cbf_safety_set(
-            cbf=h_init[0],
+            h=h_init,
             lagrangian_degrees=safety_sets_lagrangian_degrees[0],
             solver_options=None,
         )

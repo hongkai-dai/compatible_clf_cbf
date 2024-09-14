@@ -112,7 +112,7 @@ def certify_clf_cbf_separately(
         clf_cbf.SafetySetLagrangianDegrees(
             exclude=[
                 clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=0, unsafe_region=[0], state_eq_constraints=None
+                    cbf=[0], unsafe_region=[0], state_eq_constraints=None
                 )
             ],
             within=[],

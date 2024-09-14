@@ -89,16 +89,15 @@ def search_clf_cbf(
     )
     barrier_eps = np.array([0.0])
 
-    safety_sets_lagrangian_degrees = [
-        clf_cbf.SafetySetLagrangianDegrees(
-            exclude=[
-                clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=0, unsafe_region=[2], state_eq_constraints=None
-                )
-            ],
-            within=[],
-        )
-    ]
+    safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
+        exclude=[
+            clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=[0], unsafe_region=[2], state_eq_constraints=None
+            )
+        ],
+        within=[],
+    )
+
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
     if grow_heuristics == GrowHeuristics.kInnerEllipsoid:

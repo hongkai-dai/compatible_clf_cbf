@@ -153,16 +153,15 @@ def search(unit_test_flag: bool = False):
         h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
     )
-    safety_sets_lagrangian_degrees = [
-        clf_cbf.SafetySetLagrangianDegrees(
-            exclude=[
-                clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=0, unsafe_region=[0], state_eq_constraints=[0]
-                )
-            ],
-            within=[],
-        )
-    ]
+    safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
+        exclude=[
+            clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=[0], unsafe_region=[0], state_eq_constraints=[0]
+            )
+        ],
+        within=[],
+    )
+
     kappa_V = 0.1
     kappa_h = np.array([0.1])
     barrier_eps = np.array([0.001])
