@@ -1,6 +1,15 @@
 # Compatible CLF and CBFs
 Verifying and synthesizing compatible Control Lyapunov Function (CLF) and Control Barrier Function (CBF) through Sum-of-Squares.
 
+# Example
+A quadrotor stabilized by our compatible CLF-CBF-QP controller, avoiding the ground obstacle, flying to the target from different initial states.
+
+https://github.com/user-attachments/assets/3e328f3c-41cc-47c9-a646-c965019f5ccd
+
+
+
+
+
 # References
 - [Verification and Synthesis of Compatible Control Lyapunov and Control Barrier Functions](https://arxiv.org/pdf/2406.18914) <br>
    Hongkai Dai*, Chuanrui Jiang*, Hongchao Zhang and Andrew Clark <br>
