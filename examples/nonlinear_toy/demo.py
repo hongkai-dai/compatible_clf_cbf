@@ -41,18 +41,15 @@ def main(use_y_squared: bool, with_u_bound: bool):
     kappa_h = np.array([kappa_V])
 
     lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
-        lambda_y=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=3, y=0)],
-        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+        lambda_y=[clf_cbf.XYDegree(x=3, y=0)],
+        xi_y=clf_cbf.XYDegree(x=2, y=0),
         y=(
             None
             if use_y_squared
-            else [
-                clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=0)
-                for _ in range(compatible.y.size)
-            ]
+            else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
         ),
-        rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
+        h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
         state_eq_constraints=None,
     )
     barrier_eps = np.array([0.0001])
