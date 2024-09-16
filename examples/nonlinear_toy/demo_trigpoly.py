@@ -146,12 +146,12 @@ def search(unit_test_flag: bool = False):
     V_init, h_init = get_clf_cbf_init(x)
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
-        lambda_y=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
-        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+        lambda_y=[clf_cbf.XYDegree(x=2, y=0)],
+        xi_y=clf_cbf.XYDegree(x=2, y=0),
         y=None,
-        rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
-        state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
+        h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
+        state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2)],
     )
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
         exclude=[

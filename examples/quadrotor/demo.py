@@ -100,24 +100,16 @@ def search(use_y_squared: bool, with_u_bound: bool):
     kappa_h_sequences = [np.array([0.2]) for _ in range(len(kappa_V_sequences))]
 
     compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
-        lambda_y=[
-            clf_cbf.CompatibleLagrangianDegrees.Degree(x=1, y=0 if use_y_squared else 1)
-            for _ in range(4)
-        ],
-        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(
-            x=1, y=0 if use_y_squared else 1
-        ),
+        lambda_y=[clf_cbf.XYDegree(x=1, y=0 if use_y_squared else 1) for _ in range(4)],
+        xi_y=clf_cbf.XYDegree(x=1, y=0 if use_y_squared else 1),
         y=(
             None
             if use_y_squared
-            else [
-                clf_cbf.CompatibleLagrangianDegrees.Degree(x=4, y=0)
-                for _ in range(compatible.y.size)
-            ]
+            else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
         ),
-        rho_minus_V=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-        h_plus_eps=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
-        state_eq_constraints=[clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+        rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
+        h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
+        state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2)],
     )
     safety_sets_lagrangian_degrees = [
         clf_cbf.SafetySetLagrangianDegrees(

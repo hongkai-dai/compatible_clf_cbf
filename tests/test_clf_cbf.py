@@ -1,6 +1,6 @@
 import compatible_clf_cbf.clf_cbf as mut
 
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pytest  # noqa
@@ -14,7 +14,7 @@ import compatible_clf_cbf.utils as utils
 
 class TestCompatibleLagrangianDegrees(object):
     def test_construct_polynomial(self):
-        degree = mut.CompatibleLagrangianDegrees.Degree(x=3, y=2)
+        degree = mut.XYDegree(x=3, y=2)
         prog = solvers.MathematicalProgram()
         x = prog.NewIndeterminates(3, "x")
         y = prog.NewIndeterminates(2, "y")
@@ -444,16 +444,11 @@ class TestClfCbf(object):
         kappa_V = 0.01
         kappa_h = np.array([0.02, 0.03])
         lagrangian_degrees = mut.CompatibleLagrangianDegrees(
-            lambda_y=[
-                mut.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(self.nu)
-            ],
-            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+            lambda_y=[mut.XYDegree(x=2, y=0) for _ in range(self.nu)],
+            xi_y=mut.XYDegree(x=2, y=0),
             y=None,
-            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=4, y=2),
-            h_plus_eps=[
-                mut.CompatibleLagrangianDegrees.Degree(x=4, y=2)
-                for _ in range(dut.num_cbf)
-            ],
+            rho_minus_V=mut.XYDegree(x=4, y=2),
+            h_plus_eps=[mut.XYDegree(x=4, y=2) for _ in range(dut.num_cbf)],
             state_eq_constraints=None,
         )
         barrier_eps = np.array([0.01, 0.02])
@@ -510,13 +505,15 @@ class TestClfCbf(object):
             state_eq_constraints=None,
         )
 
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
+
         barrier_eps = np.array([0.01, 0.02])
         poly = dut._add_compatibility(
             prog=prog,
             V=V,
             h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
+            xi=xi,
+            lambda_mat=lambda_mat,
             lagrangians=lagrangians,
             barrier_eps=barrier_eps,
             local_clf=True,
@@ -765,11 +762,11 @@ class TestClfCbfToy:
         h_init = np.array([sym.Polynomial(0.001 - self.x[0] ** 2 - self.x[1] ** 2)])
 
         lagrangian_degrees = mut.CompatibleLagrangianDegrees(
-            lambda_y=[mut.CompatibleLagrangianDegrees.Degree(x=3, y=0)],
-            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+            lambda_y=[mut.XYDegree(x=3, y=0)],
+            xi_y=mut.XYDegree(x=2, y=0),
             y=None,
-            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
-            h_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
+            rho_minus_V=mut.XYDegree(x=2, y=0),
+            h_plus_eps=[mut.XYDegree(x=2, y=0)],
             state_eq_constraints=None,
         )
 
@@ -1119,12 +1116,12 @@ class TestClfCbfWStateEqConstraints:
         )
 
         lagrangian_degrees = mut.CompatibleLagrangianDegrees(
-            lambda_y=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=0)],
-            xi_y=mut.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+            lambda_y=[mut.XYDegree(x=2, y=0)],
+            xi_y=mut.XYDegree(x=2, y=0),
             y=None,
-            rho_minus_V=mut.CompatibleLagrangianDegrees.Degree(x=2, y=2),
-            h_plus_eps=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
-            state_eq_constraints=[mut.CompatibleLagrangianDegrees.Degree(x=2, y=2)],
+            rho_minus_V=mut.XYDegree(x=2, y=2),
+            h_plus_eps=[mut.XYDegree(x=2, y=2)],
+            state_eq_constraints=[mut.XYDegree(x=2, y=2)],
         )
 
         (
@@ -1235,3 +1232,214 @@ class TestClfCbfWStateEqConstraints:
         assert V is not None
         assert sym.Monomial() not in V.monomial_to_coefficient_map().keys()
         assert h is not None
+
+
+class TestCompatibleWithU:
+    """
+    Test the math that the polyhedron {u | Λu≤ ξ} intersects with
+    u∈𝒰 = ConvexHull(u⁽¹⁾,...,u⁽ᵐ⁾) ⊕ ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾)
+    """
+
+    def intersect(
+        self,
+        lambda_mat: np.ndarray,
+        xi: np.ndarray,
+        u_vertices: np.ndarray,
+        u_extreme_rays: np.ndarray,
+    ) -> bool:
+        u_dim = lambda_mat.shape[1]
+        prog = solvers.MathematicalProgram()
+        u = prog.NewContinuousVariables(u_dim)
+        prog.AddLinearConstraint(lambda_mat, np.full_like(xi, -np.inf), xi, u)
+        vertices_weight = prog.NewContinuousVariables(u_vertices.shape[0])
+        if vertices_weight.size > 0:
+            prog.AddBoundingBoxConstraint(0, 1, vertices_weight)
+            prog.AddLinearEqualityConstraint(
+                np.ones((u_vertices.shape[0],)), 1, vertices_weight
+            )
+        extreme_rays_weight = prog.NewContinuousVariables(u_extreme_rays.shape[0])
+        if extreme_rays_weight.size > 0:
+            prog.AddBoundingBoxConstraint(0, np.inf, extreme_rays_weight)
+        prog.AddLinearEqualityConstraint(
+            u - vertices_weight @ u_vertices - extreme_rays_weight @ u_extreme_rays,
+            np.zeros((u_dim,)),
+        )
+        result = solvers.Solve(prog)
+        return result.is_success()
+
+    def intersect_by_sos(
+        self,
+        lambda_mat: np.ndarray,
+        xi: np.ndarray,
+        u_vertices: np.ndarray,
+        u_extreme_rays: np.ndarray,
+        use_y_squared: bool,
+        u_vertices_lagrangian_degree: List[int],
+        u_extreme_rays_lagrangian_degree: List[int],
+        xi_y_lagrangian_degree: Optional[int],
+        y_lagrangian_degree: Optional[List[int]],
+    ) -> bool:
+        prog = solvers.MathematicalProgram()
+        y = prog.NewIndeterminates(lambda_mat.shape[0], "y")
+        y_set = sym.Variables(y)
+
+        if use_y_squared:
+            y_or_y_squared = np.array(
+                [sym.Polynomial(sym.Monomial(y[i], 2)) for i in range(y.size)]
+            )
+        else:
+            y_poly = np.array([sym.Polynomial(y[i]) for i in range(y.size)])
+            y_or_y_squared = y_poly
+
+        poly_one = sym.Polynomial(sym.Monomial())
+
+        poly = -poly_one
+
+        if u_vertices.shape[0] > 0:
+            u_vertices_lagrangian = np.array(
+                [
+                    prog.NewSosPolynomial(y_set, degree)[0]
+                    for degree in u_vertices_lagrangian_degree
+                ]
+            )
+            poly -= u_vertices_lagrangian.dot(
+                -xi.dot(y_or_y_squared)
+                + y_or_y_squared @ (lambda_mat @ u_vertices.T)
+                - poly_one
+            )
+
+        if u_extreme_rays.shape[0] > 0:
+            u_extreme_rays_lagrangian = np.array(
+                [
+                    prog.NewSosPolynomial(y_set, degree)[0]
+                    for degree in u_extreme_rays_lagrangian_degree
+                ]
+            )
+
+            poly -= u_extreme_rays_lagrangian.dot(
+                y_or_y_squared @ (lambda_mat @ u_extreme_rays.T)
+            )
+            assert xi_y_lagrangian_degree is not None
+            xi_y_lagrangian = prog.NewSosPolynomial(y_set, xi_y_lagrangian_degree)[0]
+            poly -= xi_y_lagrangian * (-xi.dot(y_or_y_squared) - poly_one)
+
+        if not use_y_squared:
+            assert y_lagrangian_degree is not None
+            y_lagrangian = np.array(
+                [
+                    prog.NewSosPolynomial(y_set, degree)[0]
+                    for degree in y_lagrangian_degree
+                ]
+            )
+            poly -= y_lagrangian.dot(y_poly)
+
+        prog.AddSosConstraint(poly)
+        result = solvers.Solve(prog)
+        return result.is_success()
+
+    def intersect_tester(
+        self, lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected
+    ):
+        assert (
+            self.intersect(lambda_mat, xi, u_vertices, u_extreme_rays)
+            == intersect_expected
+        )
+        assert (
+            self.intersect_by_sos(
+                lambda_mat,
+                xi,
+                u_vertices,
+                u_extreme_rays,
+                use_y_squared=True,
+                u_vertices_lagrangian_degree=[2] * u_vertices.shape[0],
+                u_extreme_rays_lagrangian_degree=[2] * u_extreme_rays.shape[0],
+                xi_y_lagrangian_degree=None if u_extreme_rays.shape[0] == 0 else 0,
+                y_lagrangian_degree=None,
+            )
+            == intersect_expected
+        )
+        assert (
+            self.intersect_by_sos(
+                lambda_mat,
+                xi,
+                u_vertices,
+                u_extreme_rays,
+                use_y_squared=False,
+                u_vertices_lagrangian_degree=[2] * u_vertices.shape[0],
+                u_extreme_rays_lagrangian_degree=[2] * u_extreme_rays.shape[0],
+                xi_y_lagrangian_degree=None if u_extreme_rays.shape[0] == 0 else 0,
+                y_lagrangian_degree=[0, 0, 0],
+            )
+            == intersect_expected
+        )
+
+    def test_convexhull_intersect(self):
+        """
+        The convex hull of u_vertices intersects with the polyhedron Λu≤ ξ
+        """
+        lambda_mat = np.array([[1, 1], [-1, 0], [0, -1]])
+        xi = np.array([1, 0, 0])
+
+        u_vertices_sequences = [
+            np.array([[0.4, 0.4], [0.4, 2], [2, 0.2]]),
+            np.array([[-1, -1], [0.5, 1], [1, 0.5]]),
+        ]
+        u_extreme_rays = np.zeros((0, 2))
+
+        intersect_expected = True
+        for u_vertices in u_vertices_sequences:
+            self.intersect_tester(
+                lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected
+            )
+
+    def test_convexhull_not_intersect(self):
+        """
+        The convex hull of u_vertices does not intersect with the polyhedron Λu≤ ξ
+        """
+        lambda_mat = np.array([[1, 1], [-1, 0], [0, -1]])
+        xi = np.array([1, 0, 0])
+
+        u_vertices_sequences = [
+            np.array([[0.55, 0.55], [0.6, 2], [2, 0.6]]),
+            np.array([[-1, -1], [-0.5, -0.1], [-0.1, -0.5]]),
+        ]
+        u_extreme_rays = np.zeros((0, 2))
+
+        intersect_expected = False
+        for u_vertices in u_vertices_sequences:
+            self.intersect_tester(
+                lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected
+            )
+
+    def test_convexcone_intersect(self):
+        """
+        The convex cone of u_extreme_rays intersects with the polyhedron Λu≤ ξ
+        """
+        lambda_mat = np.array([[1, 1], [-1, 0], [0, -1]])
+        xi = np.array([1, 0, 0])
+        u_vertices = np.zeros((0, 2))
+
+        u_extreme_rays = np.array([[0.1, 1], [1, 0.1]])
+
+        self.intersect_tester(
+            lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected=True
+        )
+
+        u_vertices = np.array([[-1, -1]])
+        u_extreme_rays = np.array([[1, 1.1], [1.1, -1]])
+        self.intersect_tester(
+            lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected=True
+        )
+
+    def test_convexcone_not_intersect(self):
+        """
+        The convex cone of u_extreme_rays doesn't intersects with the polyhedron Λu≤ ξ
+        """
+        lambda_mat = np.array([[1, 1], [-1, 0], [0, -1]])
+        xi = np.array([1, -0.1, -0.1])
+
+        u_vertices = np.empty((0, 2))
+        u_extreme_rays = np.array([[-1, 0], [0, -1]])
+        self.intersect_tester(
+            lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected=False
+        )

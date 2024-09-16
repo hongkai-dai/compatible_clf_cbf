@@ -24,20 +24,15 @@ def search_compatible_lagrangians(
 
     # Search for the
     lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
-        lambda_y=[
-            clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0) for _ in range(dut.nu)
-        ],
-        xi_y=clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0),
+        lambda_y=[clf_cbf.XYDegree(x=2, y=0) for _ in range(dut.nu)],
+        xi_y=clf_cbf.XYDegree(x=2, y=0),
         y=(
             None
             if dut.use_y_squared
-            else [
-                clf_cbf.CompatibleLagrangianDegrees.Degree(x=2, y=0)
-                for _ in range(y_size)
-            ]
+            else [clf_cbf.XYDegree(x=2, y=0) for _ in range(y_size)]
         ),
         rho_minus_V=None,
-        h_plus_eps=None,
+        h_plus_eps=[clf_cbf.XYDegree(x=2, y=0)],
         state_eq_constraints=None,
     )
     prog, lagrangians = dut.construct_search_compatible_lagrangians(

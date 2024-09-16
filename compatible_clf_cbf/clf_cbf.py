@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import os
 import os.path
 import pickle
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from typing_extensions import Self
 
 import numpy as np
@@ -56,7 +56,7 @@ class CompatibleLagrangians:
     rho_minus_V: Optional[sym.Polynomial]
     # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
     # polynomials.
-    h_plus_eps: Optional[np.ndarray]
+    h_plus_eps: np.ndarray
     # The free Lagrangian polynomials multiplying the state equality
     # constraints.
     state_eq_constraints: Optional[np.ndarray]
@@ -81,10 +81,8 @@ class CompatibleLagrangians:
             if self.rho_minus_V is not None
             else None
         )
-        h_plus_eps_result = (
-            get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
-            if self.h_plus_eps is not None
-            else None
+        h_plus_eps_result = get_polynomial_result(
+            result, self.h_plus_eps, coefficient_tol
         )
         state_eq_constraints_result = (
             get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
@@ -102,6 +100,80 @@ class CompatibleLagrangians:
 
 
 @dataclass
+class XYDegree:
+    """
+    The degree of each Lagrangian polynomial in indeterminates x and y. For
+    example, if we have a polynomial x₀²x₁y₂ + 3x₀y₁y₂³, its degree in x is
+    3 (from x₀²x₁), and its degree in y is 4 (from y₁y₂³)
+    """
+
+    x: int
+    y: int
+
+    def construct_polynomial(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: sym.Variables,
+        is_sos: bool,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> sym.Polynomial:
+        """
+        Args:
+          is_sos: whether the constructed polynomial is sos or not.
+        """
+        if is_sos:
+            basis = sym.MonomialBasis(
+                {x: int(np.floor(self.x / 2)), y: int(np.floor(self.y / 2))}
+            )
+            poly, _ = prog.NewSosPolynomial(basis, type=sos_type)
+        else:
+            basis = sym.MonomialBasis({x: self.x, y: self.y})
+            coeffs = prog.NewContinuousVariables(basis.size)
+            poly = sym.Polynomial({basis[i]: coeffs[i] for i in range(basis.size)})
+        return poly
+
+
+def _to_lagrangian_impl(
+    prog: solvers.MathematicalProgram,
+    x: sym.Variables,
+    y: sym.Variables,
+    sos_type,
+    is_sos: bool,
+    degree: Union[
+        Optional[List[XYDegree]],
+        Optional[XYDegree],
+    ],
+    lagrangian: Union[Optional[np.ndarray], Optional[sym.Polynomial]],
+) -> Union[Optional[np.ndarray], Optional[sym.Polynomial]]:
+    """
+    Convert a XYDegree (or an array of XYDegree) to Lagrangians, if `lagrangian`
+    is not None; otherwise just return `lagrangian`.
+    """
+    if lagrangian is not None:
+        return lagrangian
+    else:
+        if degree is None:
+            return None
+        else:
+            if isinstance(degree, XYDegree):
+                return degree.construct_polynomial(
+                    prog, x, y, is_sos=is_sos, sos_type=sos_type
+                )
+            elif isinstance(degree, List):
+                return np.array(
+                    [
+                        d.construct_polynomial(
+                            prog, x, y, is_sos=is_sos, sos_type=sos_type
+                        )
+                        for d in degree
+                    ]
+                )
+            else:
+                raise Exception()
+
+
+@dataclass
 class CompatibleLagrangianDegrees:
     """
     The degree of the Lagrangian multipliers in CompatibleLagrangians.
@@ -109,44 +181,20 @@ class CompatibleLagrangianDegrees:
 
     @dataclass
     class Degree:
-        """
-        The degree of each Lagrangian polynomial in indeterminates x and y. For
-        example, if we have a polynomial x₀²x₁y₂ + 3x₀y₁y₂³, its degree in x is
-        3 (from x₀²x₁), and its degree in y is 4 (from y₁y₂³)
-        """
+        def __init__(self, *args, **kwargs):
+            from warnings import warn
 
-        x: int
-        y: int
+            warn(
+                "CompatibleLagrangianDegrees.Degree is deprecated, use XYDegree instead"
+            )
+            return XYDegree(*args, **kwargs)
 
-        def construct_polynomial(
-            self,
-            prog: solvers.MathematicalProgram,
-            x: sym.Variables,
-            y: sym.Variables,
-            is_sos: bool,
-            sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
-        ) -> sym.Polynomial:
-            """
-            Args:
-              is_sos: whether the constructed polynomial is sos or not.
-            """
-            if is_sos:
-                basis = sym.MonomialBasis(
-                    {x: int(np.floor(self.x / 2)), y: int(np.floor(self.y / 2))}
-                )
-                poly, _ = prog.NewSosPolynomial(basis, type=sos_type)
-            else:
-                basis = sym.MonomialBasis({x: self.x, y: self.y})
-                coeffs = prog.NewContinuousVariables(basis.size)
-                poly = sym.Polynomial({basis[i]: coeffs[i] for i in range(basis.size)})
-            return poly
-
-    lambda_y: List[Degree]
-    xi_y: Degree
-    y: Optional[List[Degree]]
-    rho_minus_V: Optional[Degree]
-    h_plus_eps: Optional[List[Degree]]
-    state_eq_constraints: Optional[List[Degree]]
+    lambda_y: List[XYDegree]
+    xi_y: XYDegree
+    y: Optional[List[XYDegree]]
+    rho_minus_V: Optional[XYDegree]
+    h_plus_eps: List[XYDegree]
+    state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
         self,
@@ -162,79 +210,230 @@ class CompatibleLagrangianDegrees:
         h_plus_eps_lagrangian: Optional[np.ndarray] = None,
         state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
     ) -> CompatibleLagrangians:
-        if lambda_y_lagrangian is None:
-            lambda_y = np.array(
-                [
-                    lambda_y_i.construct_polynomial(prog, x, y, is_sos=False)
-                    for lambda_y_i in self.lambda_y
-                ]
-            )
-        else:
-            lambda_y = lambda_y_lagrangian
-        if xi_y_lagrangian is None:
-            xi_y = self.xi_y.construct_polynomial(prog, x, y, is_sos=False)
-        else:
-            xi_y = xi_y_lagrangian
-        if y_lagrangian is None:
-            y_lagrangian = (
-                None
-                if self.y is None
-                else np.array(
-                    [
-                        y_i.construct_polynomial(
-                            prog, x, y, is_sos=True, sos_type=sos_type
-                        )
-                        for y_i in self.y
-                    ]
-                )
-            )
-        if rho_minus_V_lagrangian is None:
-            rho_minus_V = (
-                None
-                if self.rho_minus_V is None
-                else self.rho_minus_V.construct_polynomial(
-                    prog, x, y, is_sos=True, sos_type=sos_type
-                )
-            )
-        else:
-            rho_minus_V = rho_minus_V_lagrangian
-        if h_plus_eps_lagrangian is None:
-            h_plus_eps = (
-                None
-                if self.h_plus_eps is None
-                else np.array(
-                    [
-                        h_plus_eps_i.construct_polynomial(
-                            prog, x, y, is_sos=True, sos_type=sos_type
-                        )
-                        for h_plus_eps_i in self.h_plus_eps
-                    ]
-                )
-            )
-        else:
-            h_plus_eps = h_plus_eps_lagrangian
-        if state_eq_constraints_lagrangian is None:
-            state_eq_constraints = (
-                None
-                if self.state_eq_constraints is None
-                else np.array(
-                    [
-                        state_eq_constraints_i.construct_polynomial(
-                            prog, x, y, is_sos=False
-                        )
-                        for state_eq_constraints_i in self.state_eq_constraints
-                    ]
-                )
-            )
-        else:
-            state_eq_constraints = state_eq_constraints_lagrangian
+        lambda_y = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.lambda_y,
+            lagrangian=lambda_y_lagrangian,
+        )
+        xi_y = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.xi_y,
+            lagrangian=xi_y_lagrangian,
+        )
+        y_lagrangian_new = _to_lagrangian_impl(
+            prog, x, y, sos_type, is_sos=True, degree=self.y, lagrangian=y_lagrangian
+        )
+        rho_minus_V = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.rho_minus_V,
+            lagrangian=rho_minus_V_lagrangian,
+        )
+        h_plus_eps = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.h_plus_eps,
+            lagrangian=h_plus_eps_lagrangian,
+        )
+        state_eq_constraints = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.state_eq_constraints,
+            lagrangian=state_eq_constraints_lagrangian,
+        )
         return CompatibleLagrangians(
             lambda_y=lambda_y,
             xi_y=xi_y,
-            y=y_lagrangian,
+            y=y_lagrangian_new,
             rho_minus_V=rho_minus_V,
             h_plus_eps=h_plus_eps,
             state_eq_constraints=state_eq_constraints,
+        )
+
+
+@dataclass
+class CompatibleWULagrangians:
+    # The Lagrangian multiplier multiplies with −ξᵀy+yᵀΛuⁱ−1
+    # where uⁱ is the i'th vertex of the admissible control set.
+    # Each polynomial should be SOS.
+    # The size is (num_u_vertices,)
+    u_vertices: Optional[np.ndarray]
+    # The Lagrangian multiplier multiplies with yᵀΛvʲ
+    # where vʲ is the j'th extreme ray of the admissible control set.
+    # Each polynomial should be SOS.
+    # The size is (num_u_extreme_rays,)
+    u_extreme_rays: Optional[np.ndarray]
+    # The SOS Lagrangian multiplier multiplies with −ξᵀy
+    # when there is no extreme ray in the admissible control set, this
+    # Lagrangian multiplier is None.
+    xi_y: Optional[sym.Polynomial]
+    # The SOS Lagrangian multiplier multiplies with y. When use_y_squared=True,
+    # this is None.
+    # Size is (num_y,)
+    y: Optional[np.ndarray]
+    # The SOS lagrangian multiplier multiplies with (1-V). If we don't search
+    # for CLF, then this multiplier is None.
+    rho_minus_V: Optional[sym.Polynomial]
+    # The SOS lagrangian multiplier multiplies with h + eps.
+    h_plus_eps: np.ndarray
+    # The free Lagrangian multiplier multiplies with state equality constraints.
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        u_vertices = (
+            None
+            if self.u_vertices is None
+            else get_polynomial_result(result, self.u_vertices, coefficient_tol)
+        )
+        u_extreme_rays = (
+            None
+            if self.u_extreme_rays is None
+            else get_polynomial_result(result, self.u_extreme_rays, coefficient_tol)
+        )
+        xi_y = (
+            None
+            if self.xi_y is None
+            else get_polynomial_result(result, self.xi_y, coefficient_tol)
+        )
+        y = (
+            None
+            if self.y is None
+            else get_polynomial_result(result, self.y, coefficient_tol)
+        )
+        rho_minus_V = (
+            None
+            if self.rho_minus_V is None
+            else get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
+        )
+        h_plus_eps = get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else get_polynomial_result(
+                result, self.state_eq_constraints, coefficient_tol
+            )
+        )
+        return CompatibleWULagrangians(
+            u_vertices,
+            u_extreme_rays,
+            xi_y,
+            y,
+            rho_minus_V,
+            h_plus_eps,
+            state_eq_constraints,
+        )
+
+
+@dataclass
+class CompatibleWULagrangianDegrees:
+    u_vertices: Optional[List[XYDegree]]
+    u_extreme_rays: Optional[List[XYDegree]]
+    xi_y: Optional[XYDegree]
+    y: Optional[List[XYDegree]]
+    rho_minus_V: Optional[XYDegree]
+    h_plus_eps: List[XYDegree]
+    state_eq_constraints: Optional[List[XYDegree]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: sym.Variables,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        u_vertices_lagrangian: Optional[np.ndarray] = None,
+        u_extreme_rays_lagrangian: Optional[np.ndarray] = None,
+        xi_y_lagrangian: Optional[sym.Polynomial] = None,
+        y_lagrangian: Optional[np.ndarray] = None,
+        rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+        h_plus_eps_lagrangian: Optional[np.ndarray] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
+    ) -> CompatibleWULagrangians:
+        return CompatibleWULagrangians(
+            u_vertices=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.u_vertices,
+                lagrangian=u_vertices_lagrangian,
+            ),
+            u_extreme_rays=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.u_extreme_rays,
+                lagrangian=u_extreme_rays_lagrangian,
+            ),
+            xi_y=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.xi_y,
+                lagrangian=xi_y_lagrangian,
+            ),
+            y=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.y,
+                lagrangian=y_lagrangian,
+            ),
+            rho_minus_V=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.rho_minus_V,
+                lagrangian=rho_minus_V_lagrangian,
+            ),
+            h_plus_eps=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.h_plus_eps,
+                lagrangian=h_plus_eps_lagrangian,
+            ),
+            state_eq_constraints=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=False,
+                degree=self.state_eq_constraints,
+                lagrangian=state_eq_constraints_lagrangian,
+            ),
         )
 
 
@@ -640,22 +839,32 @@ class CompatibleClfCbf:
     By Farkas lemma, this is equivalent to the following set being empty
 
     {(x, y) | [y(0)]ᵀ*[-∂h/∂x*g(x)] = 0, [y(0)]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1, y>=0}        (1)
-              [y(1)]  [ ∂V/∂x*g(x)]      [y(1)]  [-∂V/∂x*f(x)-κ_V*V(x)]
+              [y(1)]  [ ∂V/∂x*g(x)]      [y(1)]  [-∂V/∂x*f(x)-κ_V*V(x)]                       (1)
 
     We can then use Positivstellensatz to certify the emptiness of this set.
 
     The same math applies to multiple CBFs, or when u is constrained within a
     polyhedron.
 
-    If u is constrained within a polytope {u | Au * u <= bu}, we know that there exists
-    u in the polytope satisfying the CLF and CBF condition, iff the following set is
-    empty
+    When u is constrained in a polyhedron, we consider two different formulations:
+    1. Using the H-representation of the polyhedron
+       If the polyhedron is parameterized as {u | Au * u <= bu}, we know that
+       there exists u in the polyhedron satisfying the CLF and CBF condition,
+       iff the following set is empty
 
-    {(x, y) | yᵀ * [-∂h/∂x*g(x)] = 0, yᵀ * [ ∂h/∂x*f(x)+κ_h*h(x)] = -1 }                   (2)
-                   [ ∂V/∂x*g(x)]           [-∂V/∂x*f(x)-κ_V*V(x)]
-                   [         Au]           [                 bu ]
-    Namely we increase the dimensionality of y and append the equality condition in (1)
-    with Au and bu.
+       {(x, y) | yᵀ * [-∂h/∂x*g(x)] = 0, yᵀ * [ ∂h/∂x*f(x)+κ_h*h(x)] = -1 }                   (2)
+                      [ ∂V/∂x*g(x)]           [-∂V/∂x*f(x)-κ_V*V(x)]
+                      [         Au]           [                 bu ]
+       Namely we increase the dimensionality of y and append the equality
+       condition in (1) with Au and bu.
+    2. Using the V-representation of the polyhedron
+       If the polyhedron is parameterized as
+       u ∈ 𝒰 = ConvexHull(u¹, u², ..., uᵐ) ⊕ ConvexCone(v¹, v², ..., vⁿ)
+       where u¹, u², ..., uᵐ are the vertices of the polyhedron, and
+       v¹, v², ..., vⁿ are the extreme rays of the polyhedron, then in addition
+       to certifying the set {(x, y)} in (1) is non-empty, we also need to
+       certify that this set in (1) intersects with the polyhedron 𝒰, which can
+       also be done by Positivstellensatz.
     """  # noqa E501
 
     def __init__(
@@ -668,6 +877,8 @@ class CompatibleClfCbf:
         within_set: Optional[WithinSet],
         Au: Optional[np.ndarray] = None,
         bu: Optional[np.ndarray] = None,
+        u_vertices: Optional[np.ndarray] = None,
+        u_extreme_rays: Optional[np.ndarray] = None,
         num_cbf: int = 1,
         with_clf: bool = True,
         use_y_squared: bool = True,
@@ -689,11 +900,18 @@ class CompatibleClfCbf:
           within_set: Optional[WithinSet]
             If not None, then the state has to be within this `within_set`.
           Au: Optional[np.ndarray]
-            The set of admissible control is Au * u <= bu.
-            The shape is (Any, nu)
           bu: Optional[np.ndarray]
-            The set of admissible control is Au * u <= bu.
-            The shape is (Any,)
+            Au and bu describe the set of admissible control as an H-rep polyhedron {u | Au * u <= bu}
+            The shape of Au (Any, nu), the shape of bu is (Any,)
+          u_vertices: Optional[np.ndarray]
+          u_extreme_rays: Optional[np.ndarray]
+            u_vertices and u_extreme_rays describe the set of admissible
+            control as a V-rep polyhedron.
+            The set of admissible control is
+            u ∈𝒰 = ConvexHull(u_vertices[0], u_vertices[1], ..., u_vertices[-1])
+                   ⊕ ConvexCone(u_extreme_rays[0], u_extreme_rays[1], ..., u_extreme_rays[-1])
+            Note that we cannot use both the H-rep and V-rep for the admissible
+            control simultaneously.
           num_cbf: int
             The number of CBF functions. We require these CBF functions to be
             compatible in the intersection of their 0-superlevel-set.
@@ -734,12 +952,28 @@ class CompatibleClfCbf:
         check_array_of_polynomials(g, self.x_set)
         self.exclude_sets = exclude_sets
         self.within_set = within_set
+        assert (Au is None) == (bu is None)
         if Au is not None:
             assert Au.shape[1] == self.nu
             assert bu is not None
             assert bu.shape == (Au.shape[0],)
+            assert (
+                u_vertices is None and u_extreme_rays is None
+            ), "Cannot use both (Au, bu) and (u_vertices, u_extreme_rays)"
         self.Au = Au
         self.bu = bu
+        if u_vertices is not None or u_extreme_rays is not None:
+            raise NotImplementedError
+        if u_vertices is not None:
+            assert u_vertices.shape[1] == self.nu
+        if u_extreme_rays is not None:
+            assert u_extreme_rays.shape[1] == self.nu
+        if u_vertices is not None or u_extreme_rays is not None:
+            assert (
+                Au is None and bu is None
+            ), "Cannot use both (Au, bu) and (u_vertices, u_extreme_rays)"
+        self.u_vertices = u_vertices
+        self.u_extreme_rays = u_extreme_rays
         self.with_clf = with_clf
         self.use_y_squared = use_y_squared
         self.num_cbf = num_cbf
@@ -911,12 +1145,16 @@ class CompatibleClfCbf:
         lagrangians = lagrangian_degrees.to_lagrangians(
             prog, self.x_set, self.y_set, sos_type=lagrangian_sos_type
         )
+
+        xi, lambda_mat = self._calc_xi_Lambda(
+            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
+        )
         self._add_compatibility(
             prog=prog,
             V=V,
             h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
+            xi=xi,
+            lambda_mat=lambda_mat,
             lagrangians=lagrangians,
             barrier_eps=barrier_eps,
             local_clf=local_clf,
@@ -1483,8 +1721,8 @@ class CompatibleClfCbf:
         prog: solvers.MathematicalProgram,
         V: Optional[sym.Polynomial],
         h: np.ndarray,
-        kappa_V: Optional[float],
-        kappa_h: np.ndarray,
+        xi: np.ndarray,
+        lambda_mat: np.ndarray,
         lagrangians: CompatibleLagrangians,
         barrier_eps: Optional[np.ndarray],
         local_clf: bool,
@@ -1520,9 +1758,6 @@ class CompatibleClfCbf:
         Returns:
           poly: The polynomial on the left hand side of equation (3) or (4).
         """  # noqa: E501
-        xi, lambda_mat = self._calc_xi_Lambda(
-            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
-        )
         # This is just polynomial 1.
         poly_one = sym.Polynomial(sym.Monomial())
 
@@ -1557,6 +1792,75 @@ class CompatibleClfCbf:
             assert np.all(barrier_eps >= 0)
             assert lagrangians.h_plus_eps is not None
             poly -= lagrangians.h_plus_eps.dot(barrier_eps + h)
+
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+
+        prog.AddSosConstraint(poly, sos_type)
+        return poly
+
+    def _add_compatibility_w_u_polyhedron(
+        self,
+        *,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        xi: np.ndarray,
+        lambda_mat: np.ndarray,
+        lagrangians: CompatibleWULagrangians,
+        barrier_eps: Optional[np.ndarray],
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> sym.Polynomial:
+        """
+        In order to prove that the polyhedron {u | Λ(x)u≤ ξ(x)} intersects with
+        u∈𝒰 = ConvexHull(u⁽¹⁾,...,u⁽ᵐ⁾) ⊕ ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾), we want
+        to prove that a separating plane between the two polyhedron doesn't
+        exist. This is the same as proving that the following set is empty
+        {y | y≥0, −ξ(x)ᵀy + yᵀΛ(x)u⁽ⁱ⁾−1≥0 , yᵀΛ(x)v⁽ʲ⁾≥0, −ξ(x)ᵀy-1≥0, i=1,..,m, j=1,...,n, V(x)≤1, h(x)≥ −ε}
+        Using S-procedure, a sufficient condition for this set being empty is
+        -1 - t₁(x,y)ᵀ(−ξᵀy + yᵀΛu−1) - t₂(x,y)ᵀyᵀΛ(x)v - t₃(x,y)(−ξ(x)ᵀy-1) - t₄(x,y)ᵀy - t₅(x,y)(1−V(x)) − t₆(x, y)(h(x)+ε) is sos.
+
+        If the convex cone ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾) is empty, then we don't need the term - t₂(x,y)ᵀyᵀΛ(x)v-t₃(x,y)(−ξ(x)ᵀy-1).
+
+        Alternatively, we could use y² to replace y in the sos polynomial, and
+        remove the term t₄(x,y)ᵀy. Namely the following polynomial should be sos
+        -1 - t₁(x,y)ᵀ(−ξᵀy² + (y²)ᵀΛu−1) - t₂(x,y)ᵀ(y²)ᵀΛ(x)v - t₃(x,y)(−ξ(x)ᵀy²-1) - t₅(x,y)(1−V(x)) − t₆(x, y)(h(x)+ε) is sos.
+        """  # noqa E501
+        assert self.u_vertices is not None or self.u_extreme_rays is not None
+        # This is just polynomial 1.
+        poly_one = sym.Polynomial(sym.Monomial())
+
+        poly = -poly_one
+
+        y_or_y_squared = self.y_squared_poly if self.use_y_squared else self.y_poly
+
+        if self.u_vertices is not None:
+            assert lagrangians.u_vertices is not None
+            poly -= lagrangians.u_vertices.dot(
+                -xi.dot(y_or_y_squared)
+                + y_or_y_squared @ (lambda_mat @ self.u_vertices.T)
+                - poly_one
+            )
+
+        if self.u_extreme_rays is not None:
+            assert lagrangians.u_extreme_rays is not None
+            assert lagrangians.xi_y is not None
+            poly -= lagrangians.u_extreme_rays.dot(
+                y_or_y_squared @ (lambda_mat @ self.u_extreme_rays.T)
+            )
+            poly -= lagrangians.xi_y * (-xi.dot(y_or_y_squared) - poly_one)
+
+        if not self.use_y_squared:
+            assert lagrangians.y is not None
+            poly -= lagrangians.y.dot(self.y_poly)
+
+        if self.with_clf:
+            assert lagrangians.rho_minus_V is not None
+            assert V is not None
+            poly -= lagrangians.rho_minus_V * (poly_one - V)
+
+        poly -= lagrangians.h_plus_eps.dot(h + barrier_eps)
 
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
@@ -1738,12 +2042,16 @@ class CompatibleClfCbf:
             h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
         )
 
+        xi, lambda_mat = self._calc_xi_Lambda(
+            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
+        )
+
         self._add_compatibility(
             prog=prog,
             V=V,
             h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
+            xi=xi,
+            lambda_mat=lambda_mat,
             lagrangians=compatible_lagrangians_new,
             barrier_eps=barrier_eps,
             local_clf=local_clf,
