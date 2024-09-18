@@ -64,25 +64,21 @@ def main(use_y_squared: bool, with_u_bound: bool):
     compatible_result = solvers.Solve(compatible_prog, None, solver_options)
     assert compatible_result.is_success()
 
-    safety_sets_lagrangian_degrees = [
-        clf_cbf.SafetySetLagrangianDegrees(
-            exclude=[
-                clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=[0], unsafe_region=[0], state_eq_constraints=None
-                )
-            ],
-            within=[],
-        )
-    ]
+    safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
+        exclude=[
+            clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=[0], unsafe_region=[0], state_eq_constraints=None
+            )
+        ],
+        within=[],
+    )
 
-    safety_sets_lagrangians = [
-        compatible.certify_cbf_safety_set(
-            h=h_init,
-            lagrangian_degrees=safety_sets_lagrangian_degrees[0],
-            solver_options=None,
-        )
-    ]
-    assert safety_sets_lagrangians[0] is not None
+    safety_sets_lagrangians = compatible.certify_cbf_safety_set(
+        h=h_init,
+        lagrangian_degrees=safety_sets_lagrangian_degrees,
+        solver_options=None,
+    )
+    assert safety_sets_lagrangians is not None
 
 
 if __name__ == "__main__":

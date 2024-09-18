@@ -111,16 +111,14 @@ def search(use_y_squared: bool, with_u_bound: bool):
         h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
         state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2)],
     )
-    safety_sets_lagrangian_degrees = [
-        clf_cbf.SafetySetLagrangianDegrees(
-            exclude=[
-                clf_cbf.ExcludeRegionLagrangianDegrees(
-                    cbf=0, unsafe_region=[0], state_eq_constraints=[0]
-                )
-            ],
-            within=[],
-        )
-    ]
+    safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
+        exclude=[
+            clf_cbf.ExcludeRegionLagrangianDegrees(
+                cbf=[0], unsafe_region=[0], state_eq_constraints=[0]
+            )
+        ],
+        within=[],
+    )
     barrier_eps = np.array([0.000])
     x_equilibrium = np.zeros((13,))
     candidate_compatible_states_sequences = []

@@ -518,9 +518,6 @@ class TestClfCbf(object):
             barrier_eps=barrier_eps,
             local_clf=True,
         )
-        (xi, lambda_mat) = dut._calc_xi_Lambda(
-            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
-        )
         poly_expected = (
             -1
             - lagrangians.lambda_y.dot(lambda_mat.T @ dut.y_squared_poly)
@@ -528,6 +525,155 @@ class TestClfCbf(object):
             - lagrangians.rho_minus_V * (1 - V)
             - lagrangians.h_plus_eps.dot(h + barrier_eps)
         )
+        assert poly.CoefficientsAlmostEqual(poly_expected, tolerance=1e-5)
+
+    def test_add_compatibility_w_vrep1(self):
+        """
+        Test _add_compatibility with CLF and use_y_squared=True
+        """
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
+            Au=None,
+            bu=None,
+            u_vertices=np.array([[0, 1], [1, 0], [0, 0]]),
+            u_extreme_rays=np.array([[-1, -1]]),
+            num_cbf=2,
+            with_clf=True,
+            use_y_squared=True,
+        )
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(dut.xy_set)
+
+        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2) / 0.1
+        h = np.array(
+            [
+                sym.Polynomial(1 - dut.x[0] ** 2 - dut.x[1] ** 2),
+                sym.Polynomial(2 - dut.x[0] ** 2 - dut.x[2] ** 2),
+            ]
+        )
+        kappa_V = 0.01
+        kappa_h = np.array([0.02, 0.03])
+
+        # Set up Lagrangians.
+        lagrangian_degrees = mut.CompatibleWVrepLagrangianDegrees(
+            u_vertices=[mut.XYDegree(x=2, y=2) for _ in range(dut.u_vertices.shape[0])],
+            u_extreme_rays=[
+                mut.XYDegree(x=2, y=2) for _ in range(dut.u_extreme_rays.shape[0])
+            ],
+            xi_y=mut.XYDegree(x=2, y=2),
+            y=None,
+            rho_minus_V=mut.XYDegree(x=2, y=2),
+            h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
+            state_eq_constraints=None,
+        )
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
+
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
+        barrier_eps = np.array([0.01, 0.02])
+        poly = dut._add_compatibility_w_vrep(
+            prog=prog,
+            V=V,
+            h=h,
+            xi=xi,
+            lambda_mat=lambda_mat,
+            lagrangians=lagrangians,
+            barrier_eps=barrier_eps,
+            local_clf=True,
+        )
+
+        poly_expected = (
+            -1
+            - lagrangians.u_vertices.dot(
+                -xi.dot(dut.y_squared_poly)
+                + dut.y_squared_poly @ (lambda_mat @ dut.u_vertices.T)
+                - 1
+            )
+            - lagrangians.u_extreme_rays.dot(
+                dut.y_squared_poly @ lambda_mat @ dut.u_extreme_rays.T
+            )
+            - lagrangians.xi_y * (-xi.dot(dut.y_squared_poly) - 1)
+            - lagrangians.rho_minus_V * (1 - V)
+            - lagrangians.h_plus_eps.dot(h + barrier_eps)
+        )
+
+        assert poly.CoefficientsAlmostEqual(poly_expected, tolerance=1e-5)
+
+    def test_add_compatibility_w_vrep2(self):
+        """
+        Test _add_compatibility with CLF and use_y_squared=False
+        """
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
+            Au=None,
+            bu=None,
+            u_vertices=np.array([[0, 1], [1, 0], [0, 0]]),
+            u_extreme_rays=np.array([[-1, -1]]),
+            num_cbf=2,
+            with_clf=True,
+            use_y_squared=False,
+        )
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(dut.xy_set)
+
+        V = sym.Polynomial(dut.x[0] ** 2 + 4 * dut.x[1] ** 2) / 0.1
+        h = np.array(
+            [
+                sym.Polynomial(1 - dut.x[0] ** 2 - dut.x[1] ** 2),
+                sym.Polynomial(2 - dut.x[0] ** 2 - dut.x[2] ** 2),
+            ]
+        )
+        kappa_V = 0.01
+        kappa_h = np.array([0.02, 0.03])
+
+        # Set up Lagrangians.
+        lagrangian_degrees = mut.CompatibleWVrepLagrangianDegrees(
+            u_vertices=[mut.XYDegree(x=2, y=2) for _ in range(dut.u_vertices.shape[0])],
+            u_extreme_rays=[
+                mut.XYDegree(x=2, y=2) for _ in range(dut.u_extreme_rays.shape[0])
+            ],
+            xi_y=mut.XYDegree(x=2, y=2),
+            y=[mut.XYDegree(x=2, y=2) for _ in range(dut.y.size)],
+            rho_minus_V=mut.XYDegree(x=2, y=2),
+            h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
+            state_eq_constraints=None,
+        )
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
+
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
+        barrier_eps = np.array([0.01, 0.02])
+        poly = dut._add_compatibility_w_vrep(
+            prog=prog,
+            V=V,
+            h=h,
+            xi=xi,
+            lambda_mat=lambda_mat,
+            lagrangians=lagrangians,
+            barrier_eps=barrier_eps,
+            local_clf=True,
+        )
+
+        poly_expected = (
+            -1
+            - lagrangians.u_vertices.dot(
+                -xi.dot(dut.y_poly) + dut.y_poly @ (lambda_mat @ dut.u_vertices.T) - 1
+            )
+            - lagrangians.u_extreme_rays.dot(
+                dut.y_poly @ lambda_mat @ dut.u_extreme_rays.T
+            )
+            - lagrangians.xi_y * (-xi.dot(dut.y_poly) - 1)
+            - lagrangians.y.dot(dut.y_poly)
+            - lagrangians.rho_minus_V * (1 - V)
+            - lagrangians.h_plus_eps.dot(h + barrier_eps)
+        )
+
         assert poly.CoefficientsAlmostEqual(poly_expected, tolerance=1e-5)
 
     def test_add_barrier_exclude_constraint(self):
@@ -1365,8 +1511,8 @@ class TestCompatibleWithU:
                 u_vertices,
                 u_extreme_rays,
                 use_y_squared=False,
-                u_vertices_lagrangian_degree=[2] * u_vertices.shape[0],
-                u_extreme_rays_lagrangian_degree=[2] * u_extreme_rays.shape[0],
+                u_vertices_lagrangian_degree=[0] * u_vertices.shape[0],
+                u_extreme_rays_lagrangian_degree=[0] * u_extreme_rays.shape[0],
                 xi_y_lagrangian_degree=None if u_extreme_rays.shape[0] == 0 else 0,
                 y_lagrangian_degree=[0, 0, 0],
             )
@@ -1383,6 +1529,7 @@ class TestCompatibleWithU:
         u_vertices_sequences = [
             np.array([[0.4, 0.4], [0.4, 2], [2, 0.2]]),
             np.array([[-1, -1], [0.5, 1], [1, 0.5]]),
+            np.array([[1, -0.5], [-0.5, 1], [1, 1]]),
         ]
         u_extreme_rays = np.zeros((0, 2))
 
@@ -1440,6 +1587,19 @@ class TestCompatibleWithU:
 
         u_vertices = np.empty((0, 2))
         u_extreme_rays = np.array([[-1, 0], [0, -1]])
+        self.intersect_tester(
+            lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected=False
+        )
+
+    def test_empty_set(self):
+        """
+        The set Λu≤ ξ is empty.
+        """
+        lambda_mat = np.array([[1, 1], [-1, 0], [0, -1]])
+        xi = np.array([-1, 0, 0])
+
+        u_vertices = np.array([[0, 0], [0, 1], [1, 0]])
+        u_extreme_rays = np.empty((0, 2))
         self.intersect_tester(
             lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected=False
         )
