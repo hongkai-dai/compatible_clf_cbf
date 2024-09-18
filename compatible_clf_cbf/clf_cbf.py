@@ -269,7 +269,7 @@ class CompatibleLagrangianDegrees:
 
 
 @dataclass
-class CompatibleWULagrangians:
+class CompatibleWVrepLagrangians:
     # The Lagrangian multiplier multiplies with −ξᵀy+yᵀΛuⁱ−1
     # where uⁱ is the i'th vertex of the admissible control set.
     # Each polynomial should be SOS.
@@ -334,7 +334,7 @@ class CompatibleWULagrangians:
                 result, self.state_eq_constraints, coefficient_tol
             )
         )
-        return CompatibleWULagrangians(
+        return CompatibleWVrepLagrangians(
             u_vertices,
             u_extreme_rays,
             xi_y,
@@ -346,7 +346,7 @@ class CompatibleWULagrangians:
 
 
 @dataclass
-class CompatibleWULagrangianDegrees:
+class CompatibleWVrepLagrangianDegrees:
     u_vertices: Optional[List[XYDegree]]
     u_extreme_rays: Optional[List[XYDegree]]
     xi_y: Optional[XYDegree]
@@ -369,8 +369,8 @@ class CompatibleWULagrangianDegrees:
         rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
         h_plus_eps_lagrangian: Optional[np.ndarray] = None,
         state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
-    ) -> CompatibleWULagrangians:
-        return CompatibleWULagrangians(
+    ) -> CompatibleWVrepLagrangians:
+        return CompatibleWVrepLagrangians(
             u_vertices=_to_lagrangian_impl(
                 prog,
                 x,
@@ -861,8 +861,7 @@ class CompatibleClfCbf:
        If the polyhedron is parameterized as
        u ∈ 𝒰 = ConvexHull(u¹, u², ..., uᵐ) ⊕ ConvexCone(v¹, v², ..., vⁿ)
        where u¹, u², ..., uᵐ are the vertices of the polyhedron, and
-       v¹, v², ..., vⁿ are the extreme rays of the polyhedron, then in addition
-       to certifying the set {(x, y)} in (1) is non-empty, we also need to
+       v¹, v², ..., vⁿ are the extreme rays of the polyhedron, then we need to
        certify that this set in (1) intersects with the polyhedron 𝒰, which can
        also be done by Positivstellensatz.
     """  # noqa E501
@@ -962,8 +961,6 @@ class CompatibleClfCbf:
             ), "Cannot use both (Au, bu) and (u_vertices, u_extreme_rays)"
         self.Au = Au
         self.bu = bu
-        if u_vertices is not None or u_extreme_rays is not None:
-            raise NotImplementedError
         if u_vertices is not None:
             assert u_vertices.shape[1] == self.nu
         if u_extreme_rays is not None:
@@ -1114,12 +1111,17 @@ class CompatibleClfCbf:
         h: np.ndarray,
         kappa_V: Optional[float],
         kappa_h: np.ndarray,
-        lagrangian_degrees: CompatibleLagrangianDegrees,
+        lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
         barrier_eps: Optional[np.ndarray],
         local_clf: bool = True,
         lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
-    ) -> Tuple[solvers.MathematicalProgram, CompatibleLagrangians]:
+    ) -> Tuple[
+        solvers.MathematicalProgram,
+        Union[CompatibleLagrangians, CompatibleWVrepLagrangians],
+    ]:
         """
         Given CLF candidate V and CBF candidate h, construct the optimization
         program to certify that they are compatible within the region
@@ -1149,17 +1151,32 @@ class CompatibleClfCbf:
         xi, lambda_mat = self._calc_xi_Lambda(
             V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
         )
-        self._add_compatibility(
-            prog=prog,
-            V=V,
-            h=h,
-            xi=xi,
-            lambda_mat=lambda_mat,
-            lagrangians=lagrangians,
-            barrier_eps=barrier_eps,
-            local_clf=local_clf,
-            sos_type=compatible_sos_type,
-        )
+        if self.u_vertices is not None or self.u_extreme_rays is not None:
+            assert isinstance(lagrangians, CompatibleWVrepLagrangians)
+            self._add_compatibility_w_vrep(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=lagrangians,
+                barrier_eps=barrier_eps,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
+        else:
+            assert isinstance(lagrangians, CompatibleLagrangians)
+            self._add_compatibility(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=lagrangians,
+                barrier_eps=barrier_eps,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
         return (prog, lagrangians)
 
     def search_lagrangians_given_clf_cbf(
@@ -1169,7 +1186,9 @@ class CompatibleClfCbf:
         kappa_V: Optional[float],
         kappa_h: np.ndarray,
         barrier_eps: np.ndarray,
-        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
         safety_set_lagrangian_degrees: SafetySetLagrangianDegrees,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
@@ -1214,8 +1233,12 @@ class CompatibleClfCbf:
 
     def search_clf_cbf_given_lagrangian(
         self,
-        compatible_lagrangians: CompatibleLagrangians,
-        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        compatible_lagrangians: Union[
+            CompatibleLagrangians, CompatibleWVrepLagrangians
+        ],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
         safety_sets_lagrangians: SafetySetLagrangians,
         safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
         clf_degree: Optional[int],
@@ -1282,8 +1305,12 @@ class CompatibleClfCbf:
 
     def binary_search_clf_cbf(
         self,
-        compatible_lagrangians: CompatibleLagrangians,
-        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        compatible_lagrangians: Union[
+            CompatibleLagrangians, CompatibleWVrepLagrangians
+        ],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
         safety_sets_lagrangians: SafetySetLagrangians,
         safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
         clf_degree: Optional[int],
@@ -1412,7 +1439,9 @@ class CompatibleClfCbf:
         self,
         V_init: Optional[sym.Polynomial],
         h_init: np.ndarray,
-        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
         safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
         kappa_V: Optional[float],
         kappa_h: np.ndarray,
@@ -1800,7 +1829,7 @@ class CompatibleClfCbf:
         prog.AddSosConstraint(poly, sos_type)
         return poly
 
-    def _add_compatibility_w_u_polyhedron(
+    def _add_compatibility_w_vrep(
         self,
         *,
         prog: solvers.MathematicalProgram,
@@ -1808,8 +1837,9 @@ class CompatibleClfCbf:
         h: np.ndarray,
         xi: np.ndarray,
         lambda_mat: np.ndarray,
-        lagrangians: CompatibleWULagrangians,
+        lagrangians: CompatibleWVrepLagrangians,
         barrier_eps: Optional[np.ndarray],
+        local_clf: bool,
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> sym.Polynomial:
         """
@@ -1850,12 +1880,15 @@ class CompatibleClfCbf:
                 y_or_y_squared @ (lambda_mat @ self.u_extreme_rays.T)
             )
             poly -= lagrangians.xi_y * (-xi.dot(y_or_y_squared) - poly_one)
+        else:
+            assert lagrangians.u_extreme_rays is None
+            assert lagrangians.xi_y is None
 
         if not self.use_y_squared:
             assert lagrangians.y is not None
             poly -= lagrangians.y.dot(self.y_poly)
 
-        if self.with_clf:
+        if self.with_clf and local_clf:
             assert lagrangians.rho_minus_V is not None
             assert V is not None
             poly -= lagrangians.rho_minus_V * (poly_one - V)
@@ -1944,8 +1977,12 @@ class CompatibleClfCbf:
 
     def _construct_search_clf_cbf_program(
         self,
-        compatible_lagrangians: CompatibleLagrangians,
-        compatible_lagrangian_degrees: CompatibleLagrangianDegrees,
+        compatible_lagrangians: Union[
+            CompatibleLagrangians, CompatibleWVrepLagrangians
+        ],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
         safety_sets_lagrangians: SafetySetLagrangians,
         safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
         clf_degree: Optional[int],
@@ -2031,32 +2068,62 @@ class CompatibleClfCbf:
         # We can search for some compatible Lagrangians as well, including the
         # Lagrangians for y >= 0 and the state equality constraints, as y>= 0
         # and the state equality constraints don't depend on V or h.
-        compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
-            prog,
-            self.x_set,
-            self.y_set,
-            sos_type=compatible_lagrangian_sos_type,
-            lambda_y_lagrangian=compatible_lagrangians.lambda_y,
-            xi_y_lagrangian=compatible_lagrangians.xi_y,
-            rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
-            h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
-        )
+        if isinstance(compatible_lagrangian_degrees, CompatibleLagrangianDegrees):
+            compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
+                prog,
+                self.x_set,
+                self.y_set,
+                sos_type=compatible_lagrangian_sos_type,
+                lambda_y_lagrangian=compatible_lagrangians.lambda_y,
+                xi_y_lagrangian=compatible_lagrangians.xi_y,
+                rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
+                h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
+            )
+        elif isinstance(
+            compatible_lagrangian_degrees, CompatibleWVrepLagrangianDegrees
+        ):
+            compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
+                prog,
+                self.x_set,
+                self.y_set,
+                sos_type=compatible_lagrangian_sos_type,
+                u_vertices_lagrangian=compatible_lagrangians.u_vertices,
+                u_extreme_rays_lagrangian=compatible_lagrangians.u_extreme_rays,
+                xi_y_lagrangian=compatible_lagrangians.xi_y,
+                rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
+                h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
+            )
 
         xi, lambda_mat = self._calc_xi_Lambda(
             V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
         )
 
-        self._add_compatibility(
-            prog=prog,
-            V=V,
-            h=h,
-            xi=xi,
-            lambda_mat=lambda_mat,
-            lagrangians=compatible_lagrangians_new,
-            barrier_eps=barrier_eps,
-            local_clf=local_clf,
-            sos_type=compatible_sos_type,
-        )
+        if self.u_vertices is not None or self.u_extreme_rays is not None:
+            assert isinstance(compatible_lagrangians_new, CompatibleWVrepLagrangians)
+            self._add_compatibility_w_vrep(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=compatible_lagrangians_new,
+                barrier_eps=barrier_eps,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
+        else:
+            assert isinstance(compatible_lagrangians_new, CompatibleLagrangians)
+            self._add_compatibility(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=compatible_lagrangians_new,
+                barrier_eps=barrier_eps,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
 
         return (prog, V, h)
 

@@ -124,20 +124,47 @@ def plot_clf_cbf_init(
     return h_V_init, h_h_init
 
 
-def search(unit_test_flag: bool = False):
+def get_pkl_file_path(use_y_squared):
+    filename = (
+        "nonlinear_toy_clf_cbf.pkl"
+        if use_y_squared
+        else "nonlinear_toy_clf_cbf_wo_y_squared.pkl"
+    )
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "../../data/", filename
+    )
+    return path
+
+
+def search(use_v_rep: bool, unit_test_flag: bool = False):
+    """
+    use_v_rep: If set to True, use the V-rep of the input polytope, otherwise
+    use H-rep.
+    """
     x = sym.MakeVectorContinuousVariable(3, "x")
     f, g = toy_system.affine_trig_poly_dynamics(x)
     state_eq_constraints = np.array([toy_system.affine_trig_poly_state_constraints(x)])
     use_y_squared = True
     exclude_sets = [clf_cbf.ExcludeSet(get_unsafe_regions(x))]
+
+    if use_v_rep:
+        Au = bu = None
+        u_vertices = np.array([[1], [-1]])
+        u_extreme_rays = None
+    else:
+        Au = np.array([[1], [-1]])
+        bu = np.array([1, 1])
+        u_vertices = u_extreme_rays = None
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
         g=g,
         x=x,
         exclude_sets=exclude_sets,
         within_set=None,
-        Au=np.array([[1], [-1]]),
-        bu=np.array([1, 1]),
+        Au=Au,
+        bu=bu,
+        u_vertices=u_vertices,
+        u_extreme_rays=u_extreme_rays,
         num_cbf=1,
         with_clf=True,
         use_y_squared=use_y_squared,
@@ -145,14 +172,33 @@ def search(unit_test_flag: bool = False):
     )
     V_init, h_init = get_clf_cbf_init(x)
 
-    compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
-        lambda_y=[clf_cbf.XYDegree(x=2, y=0)],
-        xi_y=clf_cbf.XYDegree(x=2, y=0),
-        y=None,
-        rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
-        h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
-        state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2)],
-    )
+    if use_v_rep:
+        compatible_lagrangian_degrees = clf_cbf.CompatibleWVrepLagrangianDegrees(
+            u_vertices=[clf_cbf.XYDegree(x=2, y=0) for _ in range(u_vertices.shape[0])],
+            u_extreme_rays=None,
+            xi_y=clf_cbf.XYDegree(x=2, y=0),
+            y=(
+                None
+                if use_y_squared
+                else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
+            ),
+            rho_minus_V=clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0),
+            h_plus_eps=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0)],
+            state_eq_constraints=[clf_cbf.XYDegree(x=4, y=2 if use_y_squared else 1)],
+        )
+    else:
+        compatible_lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
+            lambda_y=[clf_cbf.XYDegree(x=2, y=0)],
+            xi_y=clf_cbf.XYDegree(x=2, y=0),
+            y=(
+                None
+                if use_y_squared
+                else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
+            ),
+            rho_minus_V=clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0),
+            h_plus_eps=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0)],
+            state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 1)],
+        )
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
         exclude=[
             clf_cbf.ExcludeRegionLagrangianDegrees(
@@ -220,15 +266,7 @@ def search(unit_test_flag: bool = False):
     x_set = sym.Variables(x)
     if not unit_test_flag:
         clf_cbf.save_clf_cbf(
-            V,
-            h,
-            x_set,
-            kappa_V,
-            kappa_h,
-            os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "../../data/nonlinear_toy_clf_cbf.pkl",
-            ),
+            V, h, x_set, kappa_V, kappa_h, get_pkl_file_path(use_y_squared)
         )
     return V, h
 
@@ -270,10 +308,7 @@ def plot_incompatible(
 def visualize():
     x = sym.MakeVectorContinuousVariable(3, "x")
     f, g = toy_system.affine_trig_poly_dynamics(x)
-    path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "../../data/nonlinear_toy_clf_cbf.pkl",
-    )
+    path = get_pkl_file_path(use_y_squared=True)
     x_set = sym.Variables(x)
     saved_data = clf_cbf.load_clf_cbf(path, x_set)
     fig = plt.figure()
@@ -328,7 +363,8 @@ def main():
         "--unit_test", action="store_true", help="Only turn this on in the unit test."
     )
     args = parser.parse_args()
-    V, h = search(args.unit_test)
+
+    V, h = search(use_v_rep=False, unit_test_flag=args.unit_test)
     if not args.unit_test:
         visualize()
 
