@@ -5,6 +5,7 @@ the state), and equality constraint to enforce the unit-length constraint on the
 cos/sin.
 """
 
+import os
 from typing import Tuple
 
 import numpy as np
@@ -86,7 +87,7 @@ def main(with_u_bound: bool):
 
     V_degree = 2
     V_init = find_trig_regional_clf(V_degree, x)
-    kappa_V = 1e-4
+    kappa_V = 0.1
     solver_options = solvers.SolverOptions()
     solver_options.SetOption(solvers.CommonSolverOption.kPrintToConsole, True)
 
@@ -106,12 +107,30 @@ def main(with_u_bound: bool):
         clf_lagrangian_degrees = clf.ClfWoInputLimitLagrangianDegrees(
             dVdx_times_f=4, dVdx_times_g=[3, 3], rho_minus_V=4, state_eq_constraints=[4]
         )
-    clf_search.search_lagrangian_given_clf(
+
+    candidate_stable_states = np.zeros((2, 7))
+    candidate_stable_states[0, :4] = np.array([2, 0, 0, 0])
+    candidate_stable_states[1, :4] = np.array([-2, 0, 0, 0])
+    stable_states_options = clf.StableStatesOptions(
+        candidate_stable_states=candidate_stable_states, V_margin=0.01
+    )
+    V = clf_search.bilinear_alternation(
         V_init,
-        rho=1,
+        clf_lagrangian_degrees,
         kappa=kappa_V,
-        lagrangian_degrees=clf_lagrangian_degrees,
+        clf_degree=2,
+        x_equilibrium=np.zeros((7,)),
+        max_iter=10,
+        stable_states_options=stable_states_options,
         solver_options=solver_options,
+    )
+    clf.save_clf(
+        V,
+        clf_search.x_set,
+        kappa_V,
+        pickle_path=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "../../data/quadrotor2d_clf.pkl"
+        ),
     )
     return
 

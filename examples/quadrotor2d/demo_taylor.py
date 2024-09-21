@@ -4,6 +4,7 @@ This uses the taylor expansion of the 2D quadrotor dynamics.
 """
 
 from enum import Enum
+import itertools
 from typing import Tuple
 
 import numpy as np
@@ -35,18 +36,28 @@ def lqr(quadrotor: Quadrotor2dPlant) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def search_clf_cbf(
-    use_y_squared: bool, with_u_bound: bool, grow_heuristics: GrowHeuristics
+    use_y_squared: bool,
+    with_u_bound: bool,
+    grow_heuristics: GrowHeuristics,
+    use_v_rep: bool,
 ):
     x = sym.MakeVectorContinuousVariable(6, "x")
     quadrotor = Quadrotor2dPlant()
     f, g = quadrotor.taylor_affine_dynamics(x)
 
     if with_u_bound:
-        Au = np.concatenate((np.eye(2), -np.eye(2)), axis=0)
         u_bound = quadrotor.m * quadrotor.g * 1.5
-        bu = np.concatenate((np.full((2,), u_bound), np.zeros((2,))))
+        if use_v_rep:
+            u_vertices = np.array(list(itertools.product([0, u_bound], repeat=2)))
+            u_extreme_rays = None
+            Au = bu = None
+        else:
+            Au = np.concatenate((np.eye(2), -np.eye(2)), axis=0)
+            bu = np.concatenate((np.full((2,), u_bound), np.zeros((2,))))
+            u_vertices = u_extreme_rays = None
     else:
         Au, bu = None, None
+        u_vertices = u_extreme_rays = None
 
     K_lqr, S_lqr = lqr(quadrotor)
     V_init = sym.Polynomial(x.dot(S_lqr @ x) / 0.01)
@@ -65,23 +76,40 @@ def search_clf_cbf(
         within_set=None,
         Au=Au,
         bu=bu,
+        u_vertices=u_vertices,
+        u_extreme_rays=u_extreme_rays,
         num_cbf=1,
         with_clf=True,
         use_y_squared=use_y_squared,
         state_eq_constraints=None,
     )
-    lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
-        lambda_y=[clf_cbf.XYDegree(x=2, y=0) for _ in range(2)],
-        xi_y=clf_cbf.XYDegree(x=4, y=0),
-        y=(
-            None
-            if use_y_squared
-            else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
-        ),
-        rho_minus_V=clf_cbf.XYDegree(x=4, y=2),
-        h_plus_eps=[clf_cbf.XYDegree(x=4, y=2)],
-        state_eq_constraints=None,
-    )
+    if use_v_rep and with_u_bound:
+        lagrangian_degrees = clf_cbf.CompatibleWVrepLagrangianDegrees(
+            u_vertices=[clf_cbf.XYDegree(x=2, y=0) for _ in range(u_vertices.shape[0])],
+            u_extreme_rays=None,
+            xi_y=None,
+            y=(
+                None
+                if use_y_squared
+                else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
+            ),
+            rho_minus_V=clf_cbf.XYDegree(x=4, y=2),
+            h_plus_eps=[clf_cbf.XYDegree(x=4, y=2)],
+            state_eq_constraints=None,
+        )
+    else:
+        lagrangian_degrees = clf_cbf.CompatibleLagrangianDegrees(
+            lambda_y=[clf_cbf.XYDegree(x=2, y=0) for _ in range(2)],
+            xi_y=clf_cbf.XYDegree(x=4, y=0),
+            y=(
+                None
+                if use_y_squared
+                else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
+            ),
+            rho_minus_V=clf_cbf.XYDegree(x=4, y=2),
+            h_plus_eps=[clf_cbf.XYDegree(x=4, y=2)],
+            state_eq_constraints=None,
+        )
     barrier_eps = np.array([0.0])
 
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
@@ -153,12 +181,20 @@ def main():
         use_y_squared=True,
         with_u_bound=False,
         grow_heuristics=GrowHeuristics.kCompatibleStates,
+        use_v_rep=False,
     )
-    # SDP with u_bound is a lot slower than without u_bound.
     # search_clf_cbf(
     #    use_y_squared=True,
     #    with_u_bound=True,
-    #    grow_heuristics=GrowHeuristics.kInnerEllipsoid,
+    #    grow_heuristics=GrowHeuristics.kCompatibleStates,
+    #    use_v_rep=True,
+    # )
+    # SDP with u_bound is a lot slower with H-rep than with V-rep.
+    # search_clf_cbf(
+    #   use_y_squared=True,
+    #   with_u_bound=True,
+    #   grow_heuristics=GrowHeuristics.kCompatibleStates,
+    #   use_v_rep=False,
     # )
 
 
