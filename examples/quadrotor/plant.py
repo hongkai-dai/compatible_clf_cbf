@@ -5,7 +5,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import pydrake.symbolic as sym
-from pydrake.examples import QuadrotorPlant
+import pydrake.examples
 import pydrake.systems.framework
 import pydrake.geometry
 import pydrake.multibody.plant
@@ -41,6 +41,124 @@ def quat2rotmat(quat: Union[np.ndarray, jnp.ndarray]) -> Union[np.ndarray, jnp.n
     return R
 
 
+def calc_matrix_relating_rpydt_to_angular_velocity_in_child(
+    rpy: np.ndarray, T
+) -> np.ndarray:
+    """
+    This is the same as CalcMatrixRelatingRpyDtToAngularVelocityInChild in Drake,
+    but supports symbolic computation.
+    """
+    sp = np.sin(rpy[1])
+    cp = np.cos(rpy[1])
+    one_over_cp = 1.0 / cp
+    sr = np.sin(rpy[0])
+    cr = np.cos(rpy[0])
+    cr_over_cp = cr * one_over_cp
+    sr_over_cp = sr * one_over_cp
+    M = np.array(
+        [
+            [T(1), sr_over_cp * sp, cr_over_cp * sp],
+            [T(0), cr, -sr],
+            [T(0), sr_over_cp, cr_over_cp],
+        ]
+    )
+    return M
+
+
+class QuadrotorPlant(pydrake.systems.framework.LeafSystem):
+    """
+    The state is (pos, rpy, pos_dot, omega_WB_B)
+    """
+
+    m: float
+    I: np.ndarray
+    l: float
+    g: float
+    kF: float
+    kM: float
+
+    def __init__(self):
+        super().__init__()
+        self.DeclareVectorInputPort("thrust", 4)
+        state_index = self.DeclareContinuousState(12)
+        self.DeclareStateOutputPort("x", state_index)
+        drake_plant = pydrake.examples.QuadrotorPlant()
+        self.m = drake_plant.m()
+        self.I = drake_plant.inertia()
+        self.g = drake_plant.g()
+        self.l = drake_plant.length()
+        self.kF = drake_plant.force_constant()
+        self.kM = drake_plant.moment_constant()
+        self.I_inv = np.linalg.inv(self.I)
+
+    def DoCalcTimeDerivatives(
+        self,
+        context: pydrake.systems.framework.Context,
+        derivatives: pydrake.systems.framework.ContinuousState,
+    ):
+        x = context.get_continuous_state_vector().CopyToVector()
+        u = self.EvalVectorInput(context, 0).CopyToVector()
+        xdot: np.ndarray = self.dynamics(x, u)
+        derivatives.SetFromVector(xdot)
+
+    def dynamics(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
+        uF_Bz = self.kF * u
+
+        Faero_B = uF_Bz.sum() * np.array([0, 0, 1])
+        Mx = self.l * (uF_Bz[1] - uF_Bz[3])
+        My = self.l * (uF_Bz[2] - uF_Bz[0])
+        uTau_Bz = self.kM * u
+        Mz = uTau_Bz[0] - uTau_Bz[1] + uTau_Bz[2] - uTau_Bz[3]
+
+        tau_B = np.stack((Mx, My, Mz))
+        Fgravity_N = np.array([0, 0, -self.m * self.g])
+
+        rpy = pydrake.math.RollPitchYaw(x[3:6])
+        w_NB_B = x[-3:]
+        rpy_dot = rpy.CalcRpyDtFromAngularVelocityInChild(w_NB_B)
+        R_NB = pydrake.math.RotationMatrix(rpy)
+
+        xyzDDt = (Fgravity_N + R_NB @ Faero_B) / self.m
+
+        wIw = np.cross(w_NB_B, self.I @ w_NB_B)
+        alpha_NB_B = self.I_inv @ (tau_B - wIw)
+
+        xDt = np.concatenate((x[6:9], rpy_dot, xyzDDt, alpha_NB_B))
+
+        return xDt
+
+    def affine_dynamics(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        T = sym.Expression if x.dtype == object else float
+        f = np.zeros((12,), dtype=x.dtype)
+        g = np.zeros((12, 4), dtype=x.dtype)
+        for i in range(12):
+            f[i] = T(0)
+            for j in range(4):
+                g[i, j] = T(0)
+
+        f[:3] = np.array([T(x[i]) for i in range(6, 9)])
+        f[3:6] = (
+            calc_matrix_relating_rpydt_to_angular_velocity_in_child(x[3:6], T=T)
+            @ x[-3:]
+        )
+        rpy = pydrake.math.RollPitchYaw_[T](x[3], x[4], x[5])
+        R = pydrake.math.RotationMatrix_[T](rpy)
+        f[8] = T(-self.g)
+        g[6:9, :] = np.outer(R.matrix()[:, 2], self.kF * np.ones((4,))) / self.m
+        w_NB_B = x[-3:]
+        f[9:] = -self.I_inv @ np.cross(w_NB_B, self.I @ w_NB_B)
+        # tau_B = u_to_M * u
+        u_to_M = np.array(
+            [
+                [T(0), T(self.l * self.kF), T(0), T(-self.l * self.kF)],
+                [T(-self.l * self.kF), T(0), T(self.l * self.kF), T(0)],
+                [T(self.kM), T(-self.kM), T(self.kM), T(-self.kM)],
+            ]
+        )
+        g[9:, :] = self.I_inv @ u_to_M
+        return f, g
+
+
 class QuadrotorPolyPlant(pydrake.systems.framework.LeafSystem):
     """
     The state is x=(quat - [1, 0, 0, 0], pos, pos_dot, omega_WB_B)
@@ -60,7 +178,7 @@ class QuadrotorPolyPlant(pydrake.systems.framework.LeafSystem):
         self.DeclareVectorInputPort("thrust", 4)
         state_index = self.DeclareContinuousState(13)
         self.DeclareStateOutputPort("x", state_index)
-        drake_plant = QuadrotorPlant()
+        drake_plant = pydrake.examples.QuadrotorPlant()
         self.m = drake_plant.m()
         self.I = drake_plant.inertia()
         self.g = drake_plant.g()
