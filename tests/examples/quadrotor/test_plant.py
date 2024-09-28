@@ -2,6 +2,7 @@ import examples.quadrotor.plant as mut
 
 import numpy as np
 import pytest  # noqa
+
 import pydrake.symbolic as sym
 import pydrake.math
 
@@ -105,3 +106,61 @@ class TestQuadrotorPolyPlant:
         u_val = np.array([1, 2, 3, 4.0])
         A, B = dut.linearize_dynamics(x_val, u_val)
         check(x_val, u_val)
+
+
+class TestQuadrotorPlant:
+    def test_dynamics(self):
+        dut = mut.QuadrotorPlant()
+        quadrotor_poly = mut.QuadrotorPolyPlant()
+
+        pos = np.array([0.5, 1.2, -0.4])
+        quat = np.array([0.5, 1.2, 0.3, -0.8])
+        quat = quat / np.linalg.norm(quat)
+        R = pydrake.math.RotationMatrix(
+            pydrake.common.eigen_geometry.Quaternion(quat[0], quat[1], quat[2], quat[3])
+        )
+        rpy = pydrake.math.RollPitchYaw(R)
+        pos_dot = np.array([0.9, -1.1, 0.3])
+        omega_WB_B = np.array([0.5, 2.2, 0.9])
+
+        x = np.concatenate((pos, rpy.vector(), pos_dot, omega_WB_B))
+        u = np.array([0.5, 1.2, 0.9, 2.1])
+        xdot = dut.dynamics(x, u)
+
+        x_poly = np.concatenate(
+            (
+                np.array([quat[0] - 1, quat[1], quat[2], quat[3]]),
+                pos,
+                pos_dot,
+                omega_WB_B,
+            )
+        )
+        x_poly_dot = quadrotor_poly.dynamics(x_poly, u)
+        np.testing.assert_allclose(xdot[:3], x_poly_dot[4:7])
+        np.testing.assert_allclose(xdot[6:], x_poly_dot[7:])
+        np.testing.assert_allclose(
+            xdot[3:6], rpy.CalcRpyDtFromAngularVelocityInChild(omega_WB_B)
+        )
+
+    def test_affine_dynamics(self):
+        dut = mut.QuadrotorPlant()
+
+        x_sym = sym.MakeVectorContinuousVariable(12, "x")
+        f_sym, g_sym = dut.affine_dynamics(x_sym)
+
+        def check(x, u):
+            xdot = dut.dynamics(x, u)
+            f, g = dut.affine_dynamics(x)
+            np.testing.assert_allclose(f + g @ u, xdot, atol=1e-6)
+            env = {x_sym[i]: x[i] for i in range(12)}
+            f_val = np.array([f_sym[i].Evaluate(env) for i in range(12)])
+            g_val = np.array(
+                [[g_sym[i, j].Evaluate(env) for j in range(4)] for i in range(12)]
+            )
+            np.testing.assert_allclose(f_val, f, atol=1e-6)
+            np.testing.assert_allclose(g_val, g, atol=1e-6)
+
+        check(
+            np.array([0.2, 1.2, 0.4, -1.5, 0.4, 0.3, 1.5, 2.3, 4.1, 0.5, -1.7, 1.5]),
+            np.array([0.5, 2.1, 0.4, 1.3]),
+        )
