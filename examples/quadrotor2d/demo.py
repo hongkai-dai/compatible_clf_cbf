@@ -82,6 +82,7 @@ def main(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
                 if use_y_squared
                 else [clf_cbf.XYDegree(x=4, y=2) for _ in range(compatible.y.size)]
             ),
+            y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
             state_eq_constraints=[clf_cbf.XYDegree(x=4, y=2)],
@@ -97,6 +98,7 @@ def main(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
                 if use_y_squared
                 else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
             ),
+            y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
             state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2)],

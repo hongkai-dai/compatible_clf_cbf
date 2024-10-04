@@ -50,6 +50,10 @@ class CompatibleLagrangians:
     # The Lagrangian polynomial multiplies with y if use_y_squared = False.
     # This multiplier is an array of SOS polynomials.
     y: Optional[np.ndarray]
+    # The Lagrangian polynomial multiplies with cross terms of y
+    # (namely y[i]*y[j]) if use_y_squared = False. This multiplier is an array
+    # of SOS poynomials.
+    y_cross: Optional[np.ndarray]
     # The Lagrangian polynomial multiplies with ρ − V when with_clf = True, and
     # we search for an CLF with a region-of-attraction {x | V(x) <= ρ}.
     # Should be a SOS polynomial.
@@ -76,6 +80,11 @@ class CompatibleLagrangians:
             if self.y is not None
             else None
         )
+        y_cross_result = (
+            get_polynomial_result(result, self.y_cross, coefficient_tol)
+            if self.y_cross is not None
+            else None
+        )
         rho_minus_V_result = (
             get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
             if self.rho_minus_V is not None
@@ -93,6 +102,7 @@ class CompatibleLagrangians:
             lambda_y=lambda_y_result,
             xi_y=xi_y_result,
             y=y_result,
+            y_cross=y_cross_result,
             rho_minus_V=rho_minus_V_result,
             h_plus_eps=h_plus_eps_result,
             state_eq_constraints=state_eq_constraints_result,
@@ -192,6 +202,7 @@ class CompatibleLagrangianDegrees:
     lambda_y: List[XYDegree]
     xi_y: XYDegree
     y: Optional[List[XYDegree]]
+    y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: List[XYDegree]
     state_eq_constraints: Optional[List[XYDegree]]
@@ -206,6 +217,7 @@ class CompatibleLagrangianDegrees:
         lambda_y_lagrangian: Optional[np.ndarray] = None,
         xi_y_lagrangian: Optional[sym.Polynomial] = None,
         y_lagrangian: Optional[np.ndarray] = None,
+        y_cross_lagrangian: Optional[np.ndarray] = None,
         rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
         h_plus_eps_lagrangian: Optional[np.ndarray] = None,
         state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
@@ -230,6 +242,15 @@ class CompatibleLagrangianDegrees:
         )
         y_lagrangian_new = _to_lagrangian_impl(
             prog, x, y, sos_type, is_sos=True, degree=self.y, lagrangian=y_lagrangian
+        )
+        y_cross_lagrangian_new = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.y_cross,
+            lagrangian=y_cross_lagrangian,
         )
         rho_minus_V = _to_lagrangian_impl(
             prog,
@@ -262,6 +283,7 @@ class CompatibleLagrangianDegrees:
             lambda_y=lambda_y,
             xi_y=xi_y,
             y=y_lagrangian_new,
+            y_cross=y_cross_lagrangian_new,
             rho_minus_V=rho_minus_V,
             h_plus_eps=h_plus_eps,
             state_eq_constraints=state_eq_constraints,
@@ -288,6 +310,10 @@ class CompatibleWVrepLagrangians:
     # this is None.
     # Size is (num_y,)
     y: Optional[np.ndarray]
+    # The SOS Lagrangian multiplier multiplies with cross terms of y
+    # (namely y[i] * y[j]). When use_y_square=True, this is None. Size is
+    # (num_y * (num_y-1)/2,)
+    y_cross: Optional[np.ndarray]
     # The SOS lagrangian multiplier multiplies with (1-V). If we don't search
     # for CLF, then this multiplier is None.
     rho_minus_V: Optional[sym.Polynomial]
@@ -321,6 +347,11 @@ class CompatibleWVrepLagrangians:
             if self.y is None
             else get_polynomial_result(result, self.y, coefficient_tol)
         )
+        y_cross = (
+            None
+            if self.y_cross is None
+            else get_polynomial_result(result, self.y_cross, coefficient_tol)
+        )
         rho_minus_V = (
             None
             if self.rho_minus_V is None
@@ -339,6 +370,7 @@ class CompatibleWVrepLagrangians:
             u_extreme_rays,
             xi_y,
             y,
+            y_cross,
             rho_minus_V,
             h_plus_eps,
             state_eq_constraints,
@@ -351,6 +383,7 @@ class CompatibleWVrepLagrangianDegrees:
     u_extreme_rays: Optional[List[XYDegree]]
     xi_y: Optional[XYDegree]
     y: Optional[List[XYDegree]]
+    y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: List[XYDegree]
     state_eq_constraints: Optional[List[XYDegree]]
@@ -366,6 +399,7 @@ class CompatibleWVrepLagrangianDegrees:
         u_extreme_rays_lagrangian: Optional[np.ndarray] = None,
         xi_y_lagrangian: Optional[sym.Polynomial] = None,
         y_lagrangian: Optional[np.ndarray] = None,
+        y_cross_lagrangian: Optional[np.ndarray] = None,
         rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
         h_plus_eps_lagrangian: Optional[np.ndarray] = None,
         state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
@@ -406,6 +440,15 @@ class CompatibleWVrepLagrangianDegrees:
                 is_sos=True,
                 degree=self.y,
                 lagrangian=y_lagrangian,
+            ),
+            y_cross=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.y_cross,
+                lagrangian=y_cross_lagrangian,
             ),
             rho_minus_V=_to_lagrangian_impl(
                 prog,
@@ -987,6 +1030,17 @@ class CompatibleClfCbf:
         self.y_poly = np.array(
             [sym.Polynomial(sym.Monomial(self.y[i], 1)) for i in range(y_size)]
         )
+        # y_cross_poly contains the cross terms y[i]*y[j].
+        self.y_cross_poly = np.empty(
+            int(self.y.size * (self.y.size - 1) / 2), dtype=object
+        )
+        y_cross_count = 0
+        for i in range(self.y.size):
+            for j in range(i + 1, self.y.size):
+                self.y_cross_poly[y_cross_count] = sym.Polynomial(
+                    sym.Monomial({self.y[i]: 1, self.y[j]: 1})
+                )
+                y_cross_count += 1
         # y_squared_poly[i] is just the polynomial y[i]**2.
         self.y_squared_poly = np.array(
             [sym.Polynomial(sym.Monomial(self.y[i], 2)) for i in range(y_size)]
@@ -1809,6 +1863,8 @@ class CompatibleClfCbf:
         if not self.use_y_squared:
             assert lagrangians.y is not None
             poly -= lagrangians.y.dot(self.y_poly)
+            if lagrangians.y_cross is not None:
+                poly -= lagrangians.y_cross.dot(self.y_cross_poly)
 
         # Compute s₃(x, y)(1 − V)
         if self.with_clf and local_clf:
@@ -1887,6 +1943,8 @@ class CompatibleClfCbf:
         if not self.use_y_squared:
             assert lagrangians.y is not None
             poly -= lagrangians.y.dot(self.y_poly)
+            if lagrangians.y_cross is not None:
+                poly -= lagrangians.y_cross.dot(self.y_cross_poly)
 
         if self.with_clf and local_clf:
             assert lagrangians.rho_minus_V is not None

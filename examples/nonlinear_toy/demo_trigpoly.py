@@ -182,6 +182,7 @@ def search(use_v_rep: bool, unit_test_flag: bool = False):
                 if use_y_squared
                 else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
             ),
+            y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0)],
             state_eq_constraints=[clf_cbf.XYDegree(x=4, y=2 if use_y_squared else 1)],
@@ -195,6 +196,7 @@ def search(use_v_rep: bool, unit_test_flag: bool = False):
                 if use_y_squared
                 else [clf_cbf.XYDegree(x=4, y=0) for _ in range(compatible.y.size)]
             ),
+            y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0)],
             state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 1)],

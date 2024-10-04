@@ -31,6 +31,7 @@ def search_compatible_lagrangians(
             if dut.use_y_squared
             else [clf_cbf.XYDegree(x=2, y=0) for _ in range(y_size)]
         ),
+        y_cross=None,
         rho_minus_V=None,
         h_plus_eps=[clf_cbf.XYDegree(x=2, y=0)],
         state_eq_constraints=None,
