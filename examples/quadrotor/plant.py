@@ -101,7 +101,7 @@ class QuadrotorPlant(pydrake.systems.framework.LeafSystem):
         xdot: np.ndarray = self.dynamics(x, u)
         derivatives.SetFromVector(xdot)
 
-    def dynamics(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
+    def dynamics(self, x: np.ndarray, u: np.ndarray, T=float) -> np.ndarray:
         uF_Bz = self.kF * u
 
         Faero_B = uF_Bz.sum() * np.array([0, 0, 1])
@@ -113,10 +113,10 @@ class QuadrotorPlant(pydrake.systems.framework.LeafSystem):
         tau_B = np.stack((Mx, My, Mz))
         Fgravity_N = np.array([0, 0, -self.m * self.g])
 
-        rpy = pydrake.math.RollPitchYaw(x[3:6])
+        rpy = pydrake.math.RollPitchYaw_[T](x[3:6])
         w_NB_B = x[-3:]
         rpy_dot = rpy.CalcRpyDtFromAngularVelocityInChild(w_NB_B)
-        R_NB = pydrake.math.RotationMatrix(rpy)
+        R_NB = pydrake.math.RotationMatrix_[T](rpy)
 
         xyzDDt = (Fgravity_N + R_NB @ Faero_B) / self.m
 
@@ -157,6 +157,32 @@ class QuadrotorPlant(pydrake.systems.framework.LeafSystem):
         )
         g[9:, :] = self.I_inv @ u_to_M
         return f, g
+
+    def affine_dynamics_taylor(
+        self, x: np.ndarray, x_val: np.ndarray, f_degree: int, g_degree: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Taylor-expand the control-affine dynamics xdot = f(x) + g(x) * u.
+        Return f(x) and g(x) in the Taylor expansion.
+        """
+        env = {x[i]: x_val[i] for i in range(12)}
+        f_expr, g_expr = self.affine_dynamics(x)
+        f = np.array(
+            [
+                sym.Polynomial(sym.TaylorExpand(f_expr[i], env, order=f_degree))
+                for i in range(12)
+            ]
+        )
+        g = np.array(
+            [
+                [
+                    sym.Polynomial(sym.TaylorExpand(g_expr[i, j], env, order=g_degree))
+                    for j in range(4)
+                ]
+                for i in range(12)
+            ]
+        )
+        return (f, g)
 
 
 class QuadrotorPolyPlant(pydrake.systems.framework.LeafSystem):

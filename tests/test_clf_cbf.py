@@ -36,6 +36,24 @@ class TestCompatibleLagrangianDegrees(object):
             assert np.sum([monomial.degree(x[i]) for i in range(x.size)]) <= 3
             assert np.sum([monomial.degree(y[i]) for i in range(y.size)]) <= 2
 
+    def test_homogeneous_y(self):
+        degree = mut.XYDegree(x=3, y=2, homogeneous_y=True)
+        prog = solvers.MathematicalProgram()
+        x = prog.NewIndeterminates(3, "x")
+        y = prog.NewIndeterminates(2, "y")
+
+        sos_poly = degree.construct_polynomial(
+            prog, sym.Variables(x), sym.Variables(y), is_sos=True
+        )
+        for monomial, _ in sos_poly.monomial_to_coefficient_map().items():
+            assert monomial.degree(y[0]) + monomial.degree(y[1]) == 2
+
+        free_poly = degree.construct_polynomial(
+            prog, sym.Variables(x), sym.Variables(y), is_sos=False
+        )
+        for monomial, _ in free_poly.monomial_to_coefficient_map().items():
+            assert monomial.degree(y[0]) + monomial.degree(y[1]) == 2
+
 
 class TestCompatibleStatesOptions:
     def test_add_cost(self):

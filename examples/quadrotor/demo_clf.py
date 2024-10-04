@@ -5,6 +5,7 @@ of the state), and the equality constraint to enforce the unit length constraint
 on the quaternion.
 """
 
+import itertools
 import os
 from typing import Tuple
 
@@ -84,32 +85,14 @@ def main(with_u_bound: bool):
 
     if with_u_bound:
         thrust_max = quadrotor.m * quadrotor.g
-        u_vertices = thrust_max * np.array(
-            [
-                [0, 0, 0, 0],
-                [0, 0, 0, 1],
-                [0, 0, 1, 0],
-                [0, 0, 1, 1],
-                [0, 1, 0, 0],
-                [0, 1, 0, 1],
-                [0, 1, 1, 0],
-                [0, 1, 1, 1],
-                [1, 0, 0, 0],
-                [1, 0, 0, 1],
-                [1, 0, 1, 0],
-                [1, 0, 1, 1],
-                [1, 1, 0, 0],
-                [1, 1, 0, 1],
-                [1, 1, 1, 0],
-                [1, 1, 1, 1],
-            ]
-        )
+        u_vertices = np.array(list(itertools.product([0, thrust_max], repeat=4)))
     else:
         u_vertices = None
 
     state_eq_constraints = quadrotor.equality_constraint(x)
 
     V_degree = 2
+    print("Find regional CLF.")
     V_init = find_trig_regional_clf(V_degree, x)
     kappa_V = 0.1
     solver_options = solvers.SolverOptions()
@@ -134,12 +117,32 @@ def main(with_u_bound: bool):
             rho_minus_V=4,
             state_eq_constraints=[4],
         )
-    clf_search.search_lagrangian_given_clf(
+    candidate_stable_states = np.zeros((4, 13))
+    candidate_stable_states[0, 4:7] = np.array([1, 0, 0])
+    candidate_stable_states[1, 4:7] = np.array([-1, 0, 0])
+    candidate_stable_states[2, 4:7] = np.array([0, 1, 0])
+    candidate_stable_states[3, 4:7] = np.array([0, -1, 0])
+    stable_states_options = clf.StableStatesOptions(
+        candidate_stable_states=candidate_stable_states, V_margin=0.01
+    )
+    print("Bilinear alternation.")
+    V = clf_search.bilinear_alternation(
         V_init,
-        rho=1,
+        clf_lagrangian_degrees,
         kappa=kappa_V,
-        lagrangian_degrees=clf_lagrangian_degrees,
+        clf_degree=2,
+        x_equilibrium=np.zeros((13,)),
+        max_iter=5,
+        stable_states_options=stable_states_options,
         solver_options=solver_options,
+    )
+    clf.save_clf(
+        V,
+        clf_search.x_set,
+        kappa=kappa_V,
+        pickle_path=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "../../data/quadrotor_clf.pkl"
+        ),
     )
     return
 
