@@ -45,6 +45,7 @@ def main(with_u_bound: bool):
         lambda_y=[clf_cbf.XYDegree(x=3, y=0)],
         xi_y=clf_cbf.XYDegree(x=2, y=0),
         y=None,
+        y_cross=None,
         rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
         h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
         state_eq_constraints=None,

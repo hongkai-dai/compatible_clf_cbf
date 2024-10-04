@@ -207,6 +207,12 @@ class TestClfCbf(object):
             assert cls.y_squared_poly.shape == cls.y.shape
             for y_squared_poly_i, y_i in zip(cls.y_squared_poly.flat, cls.y.flat):
                 assert y_squared_poly_i.EqualTo(sym.Polynomial(y_i**2))
+            assert cls.y_cross_poly.size == cls.y.size * (cls.y.size - 1) / 2
+            for y_cross in cls.y_cross_poly:
+                assert y_cross.TotalDegree() == 2
+                assert len(y_cross.monomial_to_coefficient_map()) == 1
+                for v in y_cross.indeterminates():
+                    assert y_cross.Degree(v) == 1
 
         assert dut.y.shape == (dut.num_cbf + 1,)
         check_members(dut)
@@ -447,6 +453,7 @@ class TestClfCbf(object):
             lambda_y=[mut.XYDegree(x=2, y=0) for _ in range(self.nu)],
             xi_y=mut.XYDegree(x=2, y=0),
             y=None,
+            y_cross=None,
             rho_minus_V=mut.XYDegree(x=4, y=2),
             h_plus_eps=[mut.XYDegree(x=4, y=2) for _ in range(dut.num_cbf)],
             state_eq_constraints=None,
@@ -492,6 +499,7 @@ class TestClfCbf(object):
         )
         xi_y_lagrangian = prog.NewFreePolynomial(dut.xy_set, deg=2)
         y_lagrangian = None
+        y_cross_lagrangian = None
         rho_minus_V_lagrangian, _ = prog.NewSosPolynomial(dut.xy_set, degree=2)
         h_plus_eps_lagrangian = np.array(
             [prog.NewSosPolynomial(dut.xy_set, degree=2)[0] for _ in range(dut.num_cbf)]
@@ -500,6 +508,7 @@ class TestClfCbf(object):
             lambda_y=lambda_y_lagrangian,
             xi_y=xi_y_lagrangian,
             y=y_lagrangian,
+            y_cross=y_cross_lagrangian,
             rho_minus_V=rho_minus_V_lagrangian,
             h_plus_eps=h_plus_eps_lagrangian,
             state_eq_constraints=None,
@@ -566,6 +575,7 @@ class TestClfCbf(object):
             ],
             xi_y=mut.XYDegree(x=2, y=2),
             y=None,
+            y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
             state_eq_constraints=None,
@@ -641,6 +651,7 @@ class TestClfCbf(object):
             ],
             xi_y=mut.XYDegree(x=2, y=2),
             y=[mut.XYDegree(x=2, y=2) for _ in range(dut.y.size)],
+            y_cross=[mut.XYDegree(x=2, y=0) for _ in range(dut.y_cross_poly.size)],
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
             state_eq_constraints=None,
@@ -670,6 +681,7 @@ class TestClfCbf(object):
             )
             - lagrangians.xi_y * (-xi.dot(dut.y_poly) - 1)
             - lagrangians.y.dot(dut.y_poly)
+            - lagrangians.y_cross.dot(dut.y_cross_poly)
             - lagrangians.rho_minus_V * (1 - V)
             - lagrangians.h_plus_eps.dot(h + barrier_eps)
         )
@@ -911,6 +923,7 @@ class TestClfCbfToy:
             lambda_y=[mut.XYDegree(x=3, y=0)],
             xi_y=mut.XYDegree(x=2, y=0),
             y=None,
+            y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=0),
             h_plus_eps=[mut.XYDegree(x=2, y=0)],
             state_eq_constraints=None,
@@ -1265,6 +1278,7 @@ class TestClfCbfWStateEqConstraints:
             lambda_y=[mut.XYDegree(x=2, y=0)],
             xi_y=mut.XYDegree(x=2, y=0),
             y=None,
+            y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=2)],
             state_eq_constraints=[mut.XYDegree(x=2, y=2)],
