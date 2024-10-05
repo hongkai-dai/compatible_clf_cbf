@@ -119,6 +119,11 @@ class XYDegree:
 
     x: int
     y: int
+    # If set to True, then the each monomial in the polynomial will have y's
+    # degree equal to self.y. For example if self.y = 2 and
+    # homogeneous_y = True, then the polynomial can have term like
+    # x₁²y₁y₂, y₂², but not x₁y₁ (because the degree in y is 1).
+    homogeneous_y: bool = False
 
     def construct_polynomial(
         self,
@@ -136,9 +141,24 @@ class XYDegree:
             basis = sym.MonomialBasis(
                 {x: int(np.floor(self.x / 2)), y: int(np.floor(self.y / 2))}
             )
+            if self.homogeneous_y:
+                basis_prune = np.array(
+                    [
+                        m
+                        for m in basis
+                        if np.sum([m.degree(y_i) for y_i in y])
+                        == int(np.floor(self.y / 2))
+                    ]
+                )
+                basis = basis_prune
             poly, _ = prog.NewSosPolynomial(basis, type=sos_type)
         else:
             basis = sym.MonomialBasis({x: self.x, y: self.y})
+            if self.homogeneous_y:
+                basis_prune = np.array(
+                    [m for m in basis if np.sum([m.degree(y_i) for y_i in y]) == self.y]
+                )
+                basis = basis_prune
             coeffs = prog.NewContinuousVariables(basis.size)
             poly = sym.Polynomial({basis[i]: coeffs[i] for i in range(basis.size)})
         return poly
@@ -1253,6 +1273,13 @@ class CompatibleClfCbf:
         Optional[CompatibleLagrangians],
         Optional[SafetySetLagrangians],
     ]:
+        safety_set_lagrangians_result = self.certify_cbf_safety_set(
+            h,
+            safety_set_lagrangian_degrees,
+            solver_id,
+            solver_options,
+            lagrangian_coefficient_tol,
+        )
         (
             prog_compatible,
             compatible_lagrangians,
@@ -1276,13 +1303,6 @@ class CompatibleClfCbf:
             else None
         )
 
-        safety_set_lagrangians_result = self.certify_cbf_safety_set(
-            h,
-            safety_set_lagrangian_degrees,
-            solver_id,
-            solver_options,
-            lagrangian_coefficient_tol,
-        )
         return compatible_lagrangians_result, safety_set_lagrangians_result
 
     def search_clf_cbf_given_lagrangian(
