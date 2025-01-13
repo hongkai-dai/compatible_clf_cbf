@@ -322,10 +322,6 @@ class CompatibleWVrepLagrangians:
     # Each polynomial should be SOS.
     # The size is (num_u_extreme_rays,)
     u_extreme_rays: Optional[np.ndarray]
-    # The SOS Lagrangian multiplier multiplies with −ξᵀy
-    # when there is no extreme ray in the admissible control set, this
-    # Lagrangian multiplier is None.
-    xi_y: Optional[sym.Polynomial]
     # The SOS Lagrangian multiplier multiplies with y. When use_y_squared=True,
     # this is None.
     # Size is (num_y,)
@@ -357,11 +353,6 @@ class CompatibleWVrepLagrangians:
             if self.u_extreme_rays is None
             else get_polynomial_result(result, self.u_extreme_rays, coefficient_tol)
         )
-        xi_y = (
-            None
-            if self.xi_y is None
-            else get_polynomial_result(result, self.xi_y, coefficient_tol)
-        )
         y = (
             None
             if self.y is None
@@ -388,7 +379,6 @@ class CompatibleWVrepLagrangians:
         return CompatibleWVrepLagrangians(
             u_vertices,
             u_extreme_rays,
-            xi_y,
             y,
             y_cross,
             rho_minus_V,
@@ -401,7 +391,6 @@ class CompatibleWVrepLagrangians:
 class CompatibleWVrepLagrangianDegrees:
     u_vertices: Optional[List[XYDegree]]
     u_extreme_rays: Optional[List[XYDegree]]
-    xi_y: Optional[XYDegree]
     y: Optional[List[XYDegree]]
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
@@ -417,7 +406,6 @@ class CompatibleWVrepLagrangianDegrees:
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         u_vertices_lagrangian: Optional[np.ndarray] = None,
         u_extreme_rays_lagrangian: Optional[np.ndarray] = None,
-        xi_y_lagrangian: Optional[sym.Polynomial] = None,
         y_lagrangian: Optional[np.ndarray] = None,
         y_cross_lagrangian: Optional[np.ndarray] = None,
         rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
@@ -442,15 +430,6 @@ class CompatibleWVrepLagrangianDegrees:
                 is_sos=True,
                 degree=self.u_extreme_rays,
                 lagrangian=u_extreme_rays_lagrangian,
-            ),
-            xi_y=_to_lagrangian_impl(
-                prog,
-                x,
-                y,
-                sos_type,
-                is_sos=True,
-                degree=self.xi_y,
-                lagrangian=xi_y_lagrangian,
             ),
             y=_to_lagrangian_impl(
                 prog,
@@ -1923,15 +1902,15 @@ class CompatibleClfCbf:
         u∈𝒰 = ConvexHull(u⁽¹⁾,...,u⁽ᵐ⁾) ⊕ ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾), we want
         to prove that a separating plane between the two polyhedron doesn't
         exist. This is the same as proving that the following set is empty
-        {y | y≥0, −ξ(x)ᵀy + yᵀΛ(x)u⁽ⁱ⁾−1≥0 , yᵀΛ(x)v⁽ʲ⁾≥0, −ξ(x)ᵀy-1≥0, i=1,..,m, j=1,...,n, V(x)≤1, h(x)≥ −ε}
+        {y | y≥0, −ξ(x)ᵀy + yᵀΛ(x)u⁽ⁱ⁾−1≥0 , yᵀΛ(x)v⁽ʲ⁾≥0, i=1,..,m, j=1,...,n, V(x)≤1, h(x)≥ −ε}
         Using S-procedure, a sufficient condition for this set being empty is
-        -1 - t₁(x,y)ᵀ(−ξᵀy + yᵀΛu−1) - t₂(x,y)ᵀyᵀΛ(x)v - t₃(x,y)(−ξ(x)ᵀy-1) - t₄(x,y)ᵀy - t₅(x,y)(1−V(x)) − t₆(x, y)(h(x)+ε) is sos.
+        -1 - t₁(x,y)ᵀ(−ξᵀy + yᵀΛu−1) - t₂(x,y)ᵀyᵀΛ(x)v - t₃(x,y)ᵀy - t₄(x,y)(1−V(x)) − t₅(x, y)(h(x)+ε) is sos.
 
-        If the convex cone ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾) is empty, then we don't need the term - t₂(x,y)ᵀyᵀΛ(x)v-t₃(x,y)(−ξ(x)ᵀy-1).
+        If the convex cone ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾) is empty, then we don't need the term - t₂(x,y)ᵀyᵀΛ(x)v.
 
         Alternatively, we could use y² to replace y in the sos polynomial, and
         remove the term t₄(x,y)ᵀy. Namely the following polynomial should be sos
-        -1 - t₁(x,y)ᵀ(−ξᵀy² + (y²)ᵀΛu−1) - t₂(x,y)ᵀ(y²)ᵀΛ(x)v - t₃(x,y)(−ξ(x)ᵀy²-1) - t₅(x,y)(1−V(x)) − t₆(x, y)(h(x)+ε) is sos.
+        -1 - t₁(x,y)ᵀ(−ξᵀy² + (y²)ᵀΛu−1) - t₂(x,y)ᵀ(y²)ᵀΛ(x)v - t₄(x,y)(1−V(x)) − t₅(x, y)(h(x)+ε) is sos.
         """  # noqa E501
         assert self.u_vertices is not None or self.u_extreme_rays is not None
         # This is just polynomial 1.
@@ -1951,14 +1930,11 @@ class CompatibleClfCbf:
 
         if self.u_extreme_rays is not None:
             assert lagrangians.u_extreme_rays is not None
-            assert lagrangians.xi_y is not None
             poly -= lagrangians.u_extreme_rays.dot(
                 y_or_y_squared @ (lambda_mat @ self.u_extreme_rays.T)
             )
-            poly -= lagrangians.xi_y * (-xi.dot(y_or_y_squared) - poly_one)
         else:
             assert lagrangians.u_extreme_rays is None
-            assert lagrangians.xi_y is None
 
         if not self.use_y_squared:
             assert lagrangians.y is not None
@@ -2147,6 +2123,7 @@ class CompatibleClfCbf:
         # Lagrangians for y >= 0 and the state equality constraints, as y>= 0
         # and the state equality constraints don't depend on V or h.
         if isinstance(compatible_lagrangian_degrees, CompatibleLagrangianDegrees):
+            assert isinstance(compatible_lagrangians, CompatibleLagrangians)
             compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
                 prog,
                 self.x_set,
@@ -2160,6 +2137,7 @@ class CompatibleClfCbf:
         elif isinstance(
             compatible_lagrangian_degrees, CompatibleWVrepLagrangianDegrees
         ):
+            assert isinstance(compatible_lagrangians, CompatibleWVrepLagrangians)
             compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
                 prog,
                 self.x_set,
@@ -2167,7 +2145,6 @@ class CompatibleClfCbf:
                 sos_type=compatible_lagrangian_sos_type,
                 u_vertices_lagrangian=compatible_lagrangians.u_vertices,
                 u_extreme_rays_lagrangian=compatible_lagrangians.u_extreme_rays,
-                xi_y_lagrangian=compatible_lagrangians.xi_y,
                 rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
                 h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
             )

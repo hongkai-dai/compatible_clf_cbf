@@ -591,7 +591,6 @@ class TestClfCbf(object):
             u_extreme_rays=[
                 mut.XYDegree(x=2, y=2) for _ in range(dut.u_extreme_rays.shape[0])
             ],
-            xi_y=mut.XYDegree(x=2, y=2),
             y=None,
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
@@ -623,7 +622,6 @@ class TestClfCbf(object):
             - lagrangians.u_extreme_rays.dot(
                 dut.y_squared_poly @ lambda_mat @ dut.u_extreme_rays.T
             )
-            - lagrangians.xi_y * (-xi.dot(dut.y_squared_poly) - 1)
             - lagrangians.rho_minus_V * (1 - V)
             - lagrangians.h_plus_eps.dot(h + barrier_eps)
         )
@@ -667,7 +665,6 @@ class TestClfCbf(object):
             u_extreme_rays=[
                 mut.XYDegree(x=2, y=2) for _ in range(dut.u_extreme_rays.shape[0])
             ],
-            xi_y=mut.XYDegree(x=2, y=2),
             y=[mut.XYDegree(x=2, y=2) for _ in range(dut.y.size)],
             y_cross=[mut.XYDegree(x=2, y=0) for _ in range(dut.y_cross_poly.size)],
             rho_minus_V=mut.XYDegree(x=2, y=2),
@@ -697,7 +694,6 @@ class TestClfCbf(object):
             - lagrangians.u_extreme_rays.dot(
                 dut.y_poly @ lambda_mat @ dut.u_extreme_rays.T
             )
-            - lagrangians.xi_y * (-xi.dot(dut.y_poly) - 1)
             - lagrangians.y.dot(dut.y_poly)
             - lagrangians.y_cross.dot(dut.y_cross_poly)
             - lagrangians.rho_minus_V * (1 - V)
