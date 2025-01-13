@@ -17,15 +17,35 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Set up virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+      - name: Install dependencies
+        run: |
+          source venv/bin/activate
+          pip install -e .
       - name: Linting
-        run: flake8 ./
+        run: |
+          source venv/bin/activate
+          flake8 ./
       - name: unit test
-        run: pytest tests
+        run: |
+          source venv/bin/activate
+          pytest tests
       - name: run linear_toy_demo
-        run: python examples/linear_toy/linear_toy_demo.py
+        run: |
+          source venv/bin/activate
+          python examples/linear_toy/linear_toy_demo.py
       - name: run linear_toy_w_input_limits_demo
-        run: python examples/linear_toy/linear_toy_w_input_limits_demo.py
+        run: |
+          source venv/bin/activate
+          python examples/linear_toy/linear_toy_w_input_limits_demo.py
       - name: run nonlinear_toy_demo
-        run: python examples/nonlinear_toy/demo.py
+        run: |
+          source venv/bin/activate
+          python examples/nonlinear_toy/demo.py
       - name: run nonlinear toy demo_trigpoly
-        run: python examples/nonlinear_toy/demo_trigpoly.py --unit_test
+        run: |
+          source venv/bin/activate
+          python examples/nonlinear_toy/demo_trigpoly.py --unit_test
