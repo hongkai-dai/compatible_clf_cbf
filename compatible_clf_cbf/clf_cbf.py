@@ -60,7 +60,7 @@ class CompatibleLagrangians:
     rho_minus_V: Optional[sym.Polynomial]
     # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
     # polynomials.
-    h_plus_eps: np.ndarray
+    h_plus_eps: Optional[np.ndarray]
     # The free Lagrangian polynomials multiplying the state equality
     # constraints.
     state_eq_constraints: Optional[np.ndarray]
@@ -90,8 +90,10 @@ class CompatibleLagrangians:
             if self.rho_minus_V is not None
             else None
         )
-        h_plus_eps_result = get_polynomial_result(
-            result, self.h_plus_eps, coefficient_tol
+        h_plus_eps_result = (
+            get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
+            if self.h_plus_eps is not None
+            else None
         )
         state_eq_constraints_result = (
             get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
@@ -224,7 +226,7 @@ class CompatibleLagrangianDegrees:
     y: Optional[List[XYDegree]]
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
-    h_plus_eps: List[XYDegree]
+    h_plus_eps: Optional[List[XYDegree]]
     state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
@@ -334,7 +336,7 @@ class CompatibleWVrepLagrangians:
     # for CLF, then this multiplier is None.
     rho_minus_V: Optional[sym.Polynomial]
     # The SOS lagrangian multiplier multiplies with h + eps.
-    h_plus_eps: np.ndarray
+    h_plus_eps: Optional[np.ndarray]
     # The free Lagrangian multiplier multiplies with state equality constraints.
     state_eq_constraints: Optional[np.ndarray]
 
@@ -368,7 +370,11 @@ class CompatibleWVrepLagrangians:
             if self.rho_minus_V is None
             else get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
         )
-        h_plus_eps = get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
+        h_plus_eps = (
+            None
+            if self.h_plus_eps is None
+            else get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
+        )
         state_eq_constraints = (
             None
             if self.state_eq_constraints is None
@@ -394,7 +400,7 @@ class CompatibleWVrepLagrangianDegrees:
     y: Optional[List[XYDegree]]
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
-    h_plus_eps: List[XYDegree]
+    h_plus_eps: Optional[List[XYDegree]]
     state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
