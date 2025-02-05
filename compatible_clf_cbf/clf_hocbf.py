@@ -1,0 +1,3254 @@
+from dataclasses import dataclass
+import os
+import os.path
+import pickle
+from typing import List, Optional, Tuple, Union
+from typing_extensions import Self
+
+import time
+import numpy as np
+
+import pydrake.symbolic as sym
+import pydrake.solvers as solvers
+
+from compatible_clf_cbf.utils import (
+    BinarySearchOptions,
+    ContainmentLagrangianDegree,
+    elementary_symetric_polynomials,
+    lie_derivative,
+    lower_lie_derivatives,
+    check_array_of_polynomials,
+    get_polynomial_result,
+    new_sos_polynomial,
+    solve_with_id,
+)
+import compatible_clf_cbf.utils
+import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
+
+
+@dataclass
+class XYDegree:
+    """
+    The degree of each Lagrangian polynomial in indeterminates x and y. For
+    example, if we have a polynomial x₀²x₁y₂ + 3x₀y₁y₂³, its degree in x is
+    3 (from x₀²x₁), and its degree in y is 4 (from y₁y₂³)
+    """
+
+    x: int
+    y: int
+
+    def construct_polynomial(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: Optional[sym.Variables],
+        is_sos: bool,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> sym.Polynomial:
+        """
+        Args:
+          is_sos: whether the constructed polynomial is sos or not.
+        """
+        if y is None: 
+            if self.y != 0:
+                raise ValueError("y is None but y degree is not 0")
+            if is_sos:
+                basis = sym.MonomialBasis({x: int(np.floor(self.x / 2))})
+                poly, _ = prog.NewSosPolynomial(basis, type=sos_type)
+            else:
+                basis = sym.MonomialBasis({x: self.x})
+                coeffs = prog.NewContinuousVariables(basis.size)
+                poly = sym.Polynomial({basis[i]: coeffs[i] for i in range(basis.size)})
+        else:
+            if is_sos:
+                basis = sym.MonomialBasis(
+                    {x: int(np.floor(self.x / 2)), y: int(np.floor(self.y / 2))}
+                )
+                poly, _ = prog.NewSosPolynomial(basis, type=sos_type)
+            else:
+                basis = sym.MonomialBasis({x: self.x, y: self.y})
+                coeffs = prog.NewContinuousVariables(basis.size)
+                poly = sym.Polynomial({basis[i]: coeffs[i] for i in range(basis.size)})
+        return poly
+
+
+def _to_lagrangian_impl(
+    prog: solvers.MathematicalProgram,
+    x: sym.Variables,
+    y: Optional[sym.Variables],
+    sos_type,
+    is_sos: bool,
+    degree: Union[
+        Optional[List[XYDegree]],
+        Optional[XYDegree],
+    ],
+    lagrangian: Union[Optional[np.ndarray], Optional[sym.Polynomial]],
+) -> Union[Optional[np.ndarray], Optional[sym.Polynomial]]:
+    """
+    Convert a XYDegree (or an array of XYDegree) to Lagrangians if `lagrangian`
+    is not None; otherwise just return `lagrangian`.
+    """
+    if lagrangian is not None:
+        return lagrangian
+    else:
+        if degree is None:
+            return None
+        else:
+            if isinstance(degree, XYDegree):
+                return degree.construct_polynomial(
+                    prog, x, y, is_sos=is_sos, sos_type=sos_type
+                )
+            elif isinstance(degree, List):
+                return np.array(
+                    [
+                        d.construct_polynomial(
+                            prog, x, y, is_sos=is_sos, sos_type=sos_type
+                        )
+                        for d in degree
+                    ]
+                )
+            else:
+                raise Exception()
+
+
+@dataclass
+class CompatibleLagrangians:
+    """
+    The Lagrangians for proving the compatibility condition, namely set (1) or (2)
+    defined in CompatibleClfCbf class documentation is empty.
+    """
+
+    # An array of symbolic polynomials. The Lagrangian multiplies with Λ(x)ᵀy if
+    # use_y_squared = False, or Λ(x)ᵀy² if use_y_squared = True.
+    # Each entry in this Lagrangian multiplier is a free polynomial.
+    # Size is (nu,)
+    lambda_y: np.ndarray
+    # The Lagrangian polynomial multiplies with ξ(x)ᵀy if use_y_squared = False,
+    # or ξ(x)ᵀy² if use_y_squared = True. This multiplier is a free polynomial.
+    xi_y: sym.Polynomial
+    # The Lagrangian polynomial multiplies with y if use_y_squared = False.
+    # This multiplier is an array of SOS polynomials.
+    y: Optional[np.ndarray]
+    # The Lagrangian polynomial multiplies with ρ − V when with_clf = True, and
+    # we search for an CLF with a region-of-attraction {x | V(x) <= ρ}.
+    # Should be a SOS polynomial.
+    rho_minus_V: Optional[sym.Polynomial]
+    # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
+    # polynomials.
+    h_plus_eps: np.ndarray
+    # The lagragian polynomials multiplies with lower power of lie derivatives of h(x)
+    # when we are using HOCBFs. The outter list size is equal to the number of CBFs, 
+    # the inner array size is equal to the corresponding HOCBF's relative degree - 1.
+    lower_lie_derivatives: Optional[List[np.ndarray]]
+    # The free Lagrangian polynomials multiplying the state equality
+    # constraints.
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        """
+        Gets the result of the Lagrangians.
+        """
+        lambda_y_result = get_polynomial_result(result, self.lambda_y, coefficient_tol)
+        xi_y_result = get_polynomial_result(result, self.xi_y, coefficient_tol)
+        y_result = (
+            get_polynomial_result(result, self.y, coefficient_tol)
+            if self.y is not None
+            else None
+        )
+        rho_minus_V_result = (
+            get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
+            if self.rho_minus_V is not None
+            else None
+        )
+        h_plus_eps_result = get_polynomial_result(
+            result, self.h_plus_eps, coefficient_tol
+        )
+        lower_lie_derivatives_result = (
+            [
+                get_polynomial_result(result, self.lower_lie_derivatives[i], coefficient_tol)
+                for i in range(len(self.lower_lie_derivatives))
+            ]
+            if self.lower_lie_derivatives is not None
+            else None
+        )
+        state_eq_constraints_result = (
+            get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
+            if self.state_eq_constraints is not None
+            else None
+        )
+        return CompatibleLagrangians(
+            lambda_y=lambda_y_result,
+            xi_y=xi_y_result,
+            y=y_result,
+            rho_minus_V=rho_minus_V_result,
+            h_plus_eps=h_plus_eps_result,
+            lower_lie_derivatives=lower_lie_derivatives_result,
+            state_eq_constraints=state_eq_constraints_result,
+        )
+
+
+@dataclass
+class CompatibleLagrangianDegrees:
+    """
+    The degree of the Lagrangian multipliers in CompatibleLagrangians.
+    """
+
+    @dataclass
+    class Degree:
+        def __init__(self, *args, **kwargs):
+            from warnings import warn
+
+            warn(
+                "CompatibleLagrangianDegrees.Degree is deprecated, use XYDegree instead"
+            )
+            return XYDegree(*args, **kwargs)
+
+    lambda_y: List[XYDegree]
+    xi_y: XYDegree
+    y: Optional[List[XYDegree]]
+    rho_minus_V: Optional[XYDegree]
+    h_plus_eps: List[XYDegree]
+    lower_lie_derivatives: Optional[List[List[XYDegree]]]
+    state_eq_constraints: Optional[List[XYDegree]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: sym.Variables,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        lambda_y_lagrangian: Optional[np.ndarray] = None,
+        xi_y_lagrangian: Optional[sym.Polynomial] = None,
+        y_lagrangian: Optional[np.ndarray] = None,
+        rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+        h_plus_eps_lagrangian: Optional[np.ndarray] = None,
+        lower_lie_derivatives_lagrangian: Optional[List[np.ndarray]] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
+    ) -> CompatibleLagrangians:
+        lambda_y = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.lambda_y,
+            lagrangian=lambda_y_lagrangian,
+        )
+        xi_y = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.xi_y,
+            lagrangian=xi_y_lagrangian,
+        )
+        y_lagrangian_new = _to_lagrangian_impl(
+            prog, x, y, sos_type, is_sos=True, degree=self.y, lagrangian=y_lagrangian
+        )
+        rho_minus_V = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.rho_minus_V,
+            lagrangian=rho_minus_V_lagrangian,
+        )
+        h_plus_eps = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.h_plus_eps,
+            lagrangian=h_plus_eps_lagrangian,
+        )
+        lower_lie_derivatives = (
+            None 
+            if self.lower_lie_derivatives is None
+            else[
+            _to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=(
+                    self.lower_lie_derivatives[i]
+                    if self.lower_lie_derivatives is not None
+                    else None),
+                lagrangian=(
+                    lower_lie_derivatives_lagrangian[i]
+                    if lower_lie_derivatives_lagrangian is not None
+                    else None),
+            )
+            for i in range(len(self.lower_lie_derivatives))
+            ])
+        state_eq_constraints = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.state_eq_constraints,
+            lagrangian=state_eq_constraints_lagrangian,
+        )
+        return CompatibleLagrangians(
+            lambda_y=lambda_y,
+            xi_y=xi_y,
+            y=y_lagrangian_new,
+            rho_minus_V=rho_minus_V,
+            h_plus_eps=h_plus_eps,
+            lower_lie_derivatives=lower_lie_derivatives,
+            state_eq_constraints=state_eq_constraints,
+        )
+
+
+@dataclass
+class CompatibleWVrepLagrangians:
+    # The Lagrangian multiplier multiplies with −ξᵀy+yᵀΛuⁱ−1
+    # where uⁱ is the i'th vertex of the admissible control set.
+    # Each polynomial should be SOS.
+    # The size is (num_u_vertices,)
+    u_vertices: Optional[np.ndarray]
+    # The Lagrangian multiplier multiplies with yᵀΛvʲ
+    # where vʲ is the j'th extreme ray of the admissible control set.
+    # Each polynomial should be SOS.
+    # The size is (num_u_extreme_rays,)
+    u_extreme_rays: Optional[np.ndarray]
+    # The SOS Lagrangian multiplier multiplies with −ξᵀy
+    # when there is no extreme ray in the admissible control set, this
+    # Lagrangian multiplier is None.
+    xi_y: Optional[sym.Polynomial]
+    # The SOS Lagrangian multiplier multiplies with y. When use_y_squared=True,
+    # this is None.
+    # Size is (num_y,)
+    y: Optional[np.ndarray]
+    # The SOS lagrangian multiplier multiplies with (1-V). If we don't search
+    # for CLF, then this multiplier is None.
+    rho_minus_V: Optional[sym.Polynomial]
+    # The SOS lagrangian multiplier multiplies with h + eps.
+    h_plus_eps: np.ndarray
+    # The lagragian polynomials multiplies with lower power of lie derivatives of h(x)
+    # when we are using HOCBFs. The outter list size is equal to the number of CBFs, 
+    # the inner array size is equal to the corresponding HOCBF's relative degree - 1.
+    lower_lie_derivatives: Optional[List[np.ndarray]]
+    # The free Lagrangian multiplier multiplies with state equality constraints.
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        u_vertices = (
+            None
+            if self.u_vertices is None
+            else get_polynomial_result(result, self.u_vertices, coefficient_tol)
+        )
+        u_extreme_rays = (
+            None
+            if self.u_extreme_rays is None
+            else get_polynomial_result(result, self.u_extreme_rays, coefficient_tol)
+        )
+        xi_y = (
+            None
+            if self.xi_y is None
+            else get_polynomial_result(result, self.xi_y, coefficient_tol)
+        )
+        y = (
+            None
+            if self.y is None
+            else get_polynomial_result(result, self.y, coefficient_tol)
+        )
+        rho_minus_V = (
+            None
+            if self.rho_minus_V is None
+            else get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
+        )
+        h_plus_eps = get_polynomial_result(
+            result, self.h_plus_eps, coefficient_tol
+            )
+        lower_lie_derivatives_result = [
+            get_polynomial_result(result, self.lower_lie_derivatives[i], coefficient_tol)
+            for i in range(len(self.lower_lie_derivatives))
+        ]
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else get_polynomial_result(
+                result, self.state_eq_constraints, coefficient_tol
+            )
+        )
+        return CompatibleWVrepLagrangians(
+            u_vertices,
+            u_extreme_rays,
+            xi_y,
+            y,
+            rho_minus_V,
+            h_plus_eps,
+            lower_lie_derivatives_result,
+            state_eq_constraints,
+        )
+
+
+@dataclass
+class CompatibleWVrepLagrangianDegrees:
+    u_vertices: Optional[List[XYDegree]]
+    u_extreme_rays: Optional[List[XYDegree]]
+    xi_y: Optional[XYDegree]
+    y: Optional[List[XYDegree]]
+    rho_minus_V: Optional[XYDegree]
+    h_plus_eps: List[XYDegree]
+    lower_lie_derivatives: Optional[List[List[XYDegree]]]
+    state_eq_constraints: Optional[List[XYDegree]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: sym.Variables,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        u_vertices_lagrangian: Optional[np.ndarray] = None,
+        u_extreme_rays_lagrangian: Optional[np.ndarray] = None,
+        xi_y_lagrangian: Optional[sym.Polynomial] = None,
+        y_lagrangian: Optional[np.ndarray] = None,
+        rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+        h_plus_eps_lagrangian: Optional[np.ndarray] = None,
+        lower_lie_derivatives_lagrangian: Optional[List[np.ndarray]] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
+    ) -> CompatibleWVrepLagrangians:
+        return CompatibleWVrepLagrangians(
+            u_vertices=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.u_vertices,
+                lagrangian=u_vertices_lagrangian,
+            ),
+            u_extreme_rays=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.u_extreme_rays,
+                lagrangian=u_extreme_rays_lagrangian,
+            ),
+            xi_y=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.xi_y,
+                lagrangian=xi_y_lagrangian,
+            ),
+            y=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.y,
+                lagrangian=y_lagrangian,
+            ),
+            rho_minus_V=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.rho_minus_V,
+                lagrangian=rho_minus_V_lagrangian,
+            ),
+            h_plus_eps=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=self.h_plus_eps,
+                lagrangian=h_plus_eps_lagrangian,
+            ),
+            lower_lie_derivatives = [
+                _to_lagrangian_impl(
+                    prog,
+                    x,
+                    y,
+                    sos_type,
+                    is_sos=True,
+                    degree=self.lower_lie_derivatives[i],
+                    lagrangian=(lower_lie_derivatives_lagrangian[i]
+                                if lower_lie_derivatives_lagrangian is not None
+                                else None)
+                )
+                for i in range(len(self.lower_lie_derivatives))
+            ],
+            state_eq_constraints=_to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=False,
+                degree=self.state_eq_constraints,
+                lagrangian=state_eq_constraints_lagrangian,
+            ),
+        )
+
+
+@dataclass
+class ContinuityLagrangians:
+    rho_minus_V: sym.Polynomial
+    h: np.ndarray
+    lower_lie_derivatives: Optional[List[np.ndarray]]
+    lambda_y: np.ndarray
+    xi_y: sym.Polynomial
+    yT1_minus_1: sym.Polynomial
+    xTx: sym.Polynomial
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        rho_minus_V_result = get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
+        h_result = get_polynomial_result(result, self.h, coefficient_tol)
+        lower_lie_derivatives_result = (
+            None
+            if self.lower_lie_derivatives is None
+            else [
+                get_polynomial_result(result, poly, coefficient_tol)
+                for poly in self.lower_lie_derivatives
+            ]
+        )
+        lambda_y_result = get_polynomial_result(result, self.lambda_y, coefficient_tol)
+        xi_y_result = get_polynomial_result(result, self.xi_y, coefficient_tol)
+        yT1_minus_1_result = get_polynomial_result(result, self.yT1_minus_1, coefficient_tol)
+        xTx_result = get_polynomial_result(result, self.xTx, coefficient_tol)
+        state_eq_constraints_result = (
+            None
+            if self.state_eq_constraints is None
+            else get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
+        )
+        return ContinuityLagrangians(
+            rho_minus_V=rho_minus_V_result,
+            h=h_result,
+            lower_lie_derivatives=lower_lie_derivatives_result,
+            lambda_y=lambda_y_result,
+            xi_y=xi_y_result,
+            yT1_minus_1=yT1_minus_1_result,
+            xTx=xTx_result,
+            state_eq_constraints=state_eq_constraints_result,
+        )
+
+
+@dataclass
+class ContinuityLagrangianDegrees:
+    rho_minus_V: XYDegree
+    h: List[XYDegree]
+    lower_lie_derivatives: Optional[List[List[XYDegree]]]
+    lambda_y: List[XYDegree]
+    xi_y: XYDegree
+    yT1_minus_1: XYDegree
+    xTx: XYDegree
+    state_eq_constraints: Optional[List[XYDegree]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: sym.Variables,
+        y: sym.Variables,
+        *,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+        h_lagrangian: Optional[np.ndarray] = None,
+        lower_lie_derivatives_lagrangian: Optional[List[np.ndarray]] = None,
+        lambda_y_lagrangian: Optional[np.ndarray] = None,
+        xi_y_lagrangian: Optional[sym.Polynomial] = None,
+        yT1_minus_1_lagrangian: Optional[sym.Polynomial] = None,
+        xTx_lagrangian: Optional[sym.Polynomial] = None,
+        state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
+    ) -> ContinuityLagrangians:
+        rho_minus_V = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.rho_minus_V,
+            lagrangian=rho_minus_V_lagrangian,
+        )
+        h = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.h,
+            lagrangian=h_lagrangian,
+        )
+        lower_lie_derivatives = [
+            _to_lagrangian_impl(
+                prog,
+                x,
+                y,
+                sos_type,
+                is_sos=True,
+                degree=(
+                    self.lower_lie_derivatives[i]
+                    if self.lower_lie_derivatives is not None
+                    else None),
+                lagrangian=(
+                    lower_lie_derivatives_lagrangian[i]
+                    if lower_lie_derivatives_lagrangian is not None
+                    else None),
+            )
+            for i in range(len(self.lower_lie_derivatives))
+        ]
+        lambda_y = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.lambda_y,
+            lagrangian=lambda_y_lagrangian,
+        )
+        xi_y = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.xi_y,
+            lagrangian=xi_y_lagrangian,
+        )
+        yT1_minus_1 = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.yT1_minus_1,
+            lagrangian=yT1_minus_1_lagrangian,
+        )
+        xTx = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=True,
+            degree=self.xTx,
+            lagrangian=xTx_lagrangian,
+        )
+        state_eq_constraints = _to_lagrangian_impl(
+            prog,
+            x,
+            y,
+            sos_type,
+            is_sos=False,
+            degree=self.state_eq_constraints,
+            lagrangian=state_eq_constraints_lagrangian,
+        )
+        return ContinuityLagrangians(
+            rho_minus_V=rho_minus_V,
+            h=h,
+            lower_lie_derivatives=lower_lie_derivatives,
+            lambda_y=lambda_y,
+            xi_y=xi_y,
+            yT1_minus_1=yT1_minus_1,
+            xTx=xTx,
+            state_eq_constraints=state_eq_constraints,
+        )
+
+
+@dataclass
+class NominalCompatibleLagrangians:
+    shared_sos: sym.Polynomial
+    shared_poly: np.ndarray
+    rho_minus_V: sym.Polynomial
+    second_order_cone_V: sym.Polynomial
+    h: np.ndarray
+    second_order_cone_h: np.ndarray
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+            self, 
+            result: solvers.MathematicalProgramResult,
+            coefficient_tol: Optional[float],
+    ) -> Self:
+        shared_sos_result = get_polynomial_result(result, self.shared_sos, coefficient_tol)
+        rho_minus_V_result = get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
+        shared_poly_result = get_polynomial_result(result, self.shared_poly, coefficient_tol)
+        second_order_cone_V_result = get_polynomial_result(result, self.second_order_cone_V, coefficient_tol)
+        h_result = get_polynomial_result(result, self.h, coefficient_tol)
+        second_order_cone_h_result = get_polynomial_result(result, self.second_order_cone_h, coefficient_tol)
+        state_eq_constraints_result = (
+            None
+            if self.state_eq_constraints is None
+            else get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
+        )
+        return NominalCompatibleLagrangians(
+            shared_sos=shared_sos_result,
+            shared_poly=shared_poly_result,
+            rho_minus_V=rho_minus_V_result,
+            second_order_cone_V=second_order_cone_V_result,
+            h=h_result,
+            second_order_cone_h=second_order_cone_h_result,
+            state_eq_constraints=state_eq_constraints_result,
+        )
+
+
+@dataclass
+class NominalCompatibleLagrangianDegrees:
+    shared_sos: XYDegree
+    shared_poly: List[XYDegree]
+    rho_minus_V: XYDegree
+    second_order_cone_V: XYDegree
+    h: Optional[List[XYDegree]]
+    second_order_cone_h: Optional[List[XYDegree]]
+    state_eq_constraints: Optional[List[XYDegree]]
+
+    def to_largrangians(
+            self,
+            prog: solvers.MathematicalProgram,
+            x: sym.Variables,
+            *,
+            sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+            shared_sos_lagrangian: Optional[sym.Polynomial] = None,
+            shared_poly_lagrangian: Optional[np.ndarray] = None,
+            rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
+            second_order_cone_V_lagrangian: Optional[sym.Polynomial] = None,
+            h_lagrangian: Optional[np.ndarray] = None,
+            second_order_cone_h_lagrangian: Optional[np.ndarray] = None,
+            state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
+    ) -> NominalCompatibleLagrangians:
+        shared_sos_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=True,
+            degree=self.shared_sos,
+            lagrangian=shared_sos_lagrangian,
+        )
+        shared_poly_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=False,
+            degree=self.shared_poly,
+            lagrangian=shared_poly_lagrangian,
+        )
+        rho_minus_V_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=True,
+            degree=self.rho_minus_V,
+            lagrangian=rho_minus_V_lagrangian,
+        )
+        second_order_cone_V_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=True,
+            degree=self.second_order_cone_V,
+            lagrangian=second_order_cone_V_lagrangian,
+        )
+        h_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=True,
+            degree=self.h,
+            lagrangian=h_lagrangian,
+        )
+        second_order_cone_h_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=True,
+            degree=self.second_order_cone_h,
+            lagrangian=second_order_cone_h_lagrangian,
+        )
+        state_eq_constraints_lagrangian = _to_lagrangian_impl(
+            prog,
+            x,
+            y=None,
+            sos_type=sos_type,
+            is_sos=False,
+            degree=self.state_eq_constraints,
+            lagrangian=state_eq_constraints_lagrangian,
+        )
+
+        return NominalCompatibleLagrangians(
+            shared_sos=shared_sos_lagrangian,
+            shared_poly=shared_poly_lagrangian,
+            rho_minus_V=rho_minus_V_lagrangian,
+            second_order_cone_V=second_order_cone_V_lagrangian,
+            h=h_lagrangian,
+            second_order_cone_h=second_order_cone_h_lagrangian,
+            state_eq_constraints=state_eq_constraints_lagrangian,
+        )
+
+
+@dataclass
+class WithinRegionLagrangians:
+    """
+    The Lagrangians for certifying that the 0-super level set of a CBF is a
+    subset of the safe region.
+
+    for a CBF h(x), to prove that the 0-super level set {x | hᵢ(x) >= 0, ∀i} is
+    a subset of the safe set {x | p(x) <= 0}, we can impose the constraint
+    −(1+ϕ₀(x))p(x) − ∑ᵢψᵢ(x)hᵢ(x) is sos.
+    ϕ₀(x) is sos
+    ψᵢ(x) is sos.
+    """
+
+    cbf: np.ndarray
+    safe_region: sym.Polynomial
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        return WithinRegionLagrangians(
+            cbf=get_polynomial_result(result, self.cbf, coefficient_tol),
+            safe_region=get_polynomial_result(
+                result, self.safe_region, coefficient_tol
+            ),
+            state_eq_constraints=(
+                None
+                if self.state_eq_constraints is None
+                else get_polynomial_result(
+                    result, self.state_eq_constraints, coefficient_tol
+                )
+            ),
+        )
+
+
+@dataclass
+class WithinRegionLagrangianDegrees:
+    cbf: List[int]
+    safe_region: int
+    state_eq_constraints: Optional[List[int]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        cbf_lagrangian: Optional[np.ndarray] = None,
+    ) -> WithinRegionLagrangians:
+        if cbf_lagrangian is None:
+            cbf = np.array(
+                [new_sos_polynomial(prog, x_set, degree)[0] for degree in self.cbf]
+            )
+        else:
+            cbf = cbf_lagrangian
+
+        safe_region = new_sos_polynomial(prog, x_set, self.safe_region)[0]
+
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    prog.NewFreePolynomial(x_set, degree)
+                    for degree in self.state_eq_constraints
+                ]
+            )
+        )
+        return WithinRegionLagrangians(
+            cbf=cbf,
+            safe_region=safe_region,
+            state_eq_constraints=state_eq_constraints,
+        )
+
+
+@dataclass
+class ExcludeRegionLagrangians:
+    """
+    The Lagrangians for certifying that the 0-super level set of a CBF doesn't
+    intersect with an unsafe region.
+
+    For a CBF function hᵢ(x), to prove that the 0-super level set
+    {x |hᵢ(x) >= 0, ∀i} doesn't intersect with an unsafe set
+    {x | pⱼ(x) <= 0 for all j}, we impose the condition:
+
+    -∑ᵢϕᵢ(x))*hᵢ(x) +∑ⱼψⱼ(x)pⱼ(x)-1 is sos
+    ϕᵢ(x), ψⱼ(x) are sos.
+    """
+
+    # The Lagrangian that multiplies with CBF function.
+    # ϕᵢ(x) in the documentation above.
+    cbf: np.ndarray
+    # An array of sym.Polynomial. The Lagrangians that multiply the unsafe region
+    # polynomials. ψⱼ(x) in the documentation above.
+    unsafe_region: np.ndarray
+    # The free Lagrangian that multiplies with the state equality constraints
+    # (such as sin²θ+cos²θ=1)
+    state_eq_constraints: Optional[np.ndarray]
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        return ExcludeRegionLagrangians(
+            cbf=get_polynomial_result(result, self.cbf, coefficient_tol),
+            unsafe_region=get_polynomial_result(
+                result, self.unsafe_region, coefficient_tol
+            ),
+            state_eq_constraints=(
+                None
+                if self.state_eq_constraints is None
+                else get_polynomial_result(
+                    result, self.state_eq_constraints, coefficient_tol
+                )
+            ),
+        )
+
+
+@dataclass
+class ExcludeRegionLagrangianDegrees:
+    cbf: List[int]
+    unsafe_region: List[int]
+    state_eq_constraints: Optional[List[int]]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        cbf_lagrangian: Optional[np.ndarray] = None,
+    ) -> ExcludeRegionLagrangians:
+        if cbf_lagrangian is None:
+            cbf = np.array(
+                [new_sos_polynomial(prog, x_set, degree)[0] for degree in self.cbf]
+            )
+        else:
+            cbf = cbf_lagrangian
+
+        unsafe_region = np.array(
+            [
+                new_sos_polynomial(prog, x_set, degree)[0]
+                for degree in self.unsafe_region
+            ]
+        )
+
+        state_eq_constraints = (
+            None
+            if self.state_eq_constraints is None
+            else np.array(
+                [
+                    prog.NewFreePolynomial(x_set, degree)
+                    for degree in self.state_eq_constraints
+                ]
+            )
+        )
+        return ExcludeRegionLagrangians(
+            cbf=cbf,
+            unsafe_region=unsafe_region,
+            state_eq_constraints=state_eq_constraints,
+        )
+
+
+@dataclass
+class ExcludeSet:
+    """
+    An exclude set is described as {x | lᵢ(x)<=0 for all i}. Namely it is a
+    semi-algebraic set. This is the "unsafe set" that the system state should not be in.
+    """
+
+    l: np.ndarray
+
+
+@dataclass
+class WithinSet:
+    """
+    A within set is described as {x | lᵢ(x)<=0 for all i}. Namely it is a
+    semi-algebraic set. This is the "safe set" that the system state has to be within.
+    """
+
+    l: np.ndarray
+
+
+@dataclass
+class SafetySetLagrangians:
+    # exclude[i] is the the i'th exclude set.
+    exclude: List[ExcludeRegionLagrangians]
+    # within[i] is for the within_set.l[i]
+    within: List[WithinRegionLagrangians]
+
+    def contains_none(self) -> bool:
+        """
+        Returns true if self.exclude or self.within contains None
+        """
+        return not (all(self.exclude) and all(self.within))
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        exclude = [a.get_result(result, coefficient_tol) for a in self.exclude]
+        within = [a.get_result(result, coefficient_tol) for a in self.within]
+        return SafetySetLagrangians(exclude=exclude, within=within)
+
+    def get_cbf_lagrangians(
+        self,
+    ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        exclude_cbf = [exclude.cbf for exclude in self.exclude]
+        within_cbf = [within.cbf for within in self.within]
+        return exclude_cbf, within_cbf
+
+
+@dataclass
+class SafetySetLagrangianDegrees:
+    exclude: List[ExcludeRegionLagrangianDegrees]
+    within: List[WithinRegionLagrangianDegrees]
+
+    def to_lagrangians(
+        self,
+        prog: solvers.MathematicalProgram,
+        x_set: sym.Variables,
+        cbf_lagrangian: Optional[Tuple[List[np.ndarray], List[np.ndarray]]] = None,
+    ) -> SafetySetLagrangians:
+        exclude = [
+            self.exclude[i].to_lagrangians(
+                prog, x_set, (None if cbf_lagrangian is None else cbf_lagrangian[0][i])
+            )
+            for i in range(len(self.exclude))
+        ]
+        within = [
+            self.within[i].to_lagrangians(
+                prog, x_set, None if cbf_lagrangian is None else cbf_lagrangian[1][i]
+            )
+            for i in range(len(self.within))
+        ]
+        return SafetySetLagrangians(exclude=exclude, within=within)
+
+
+@dataclass
+class InnerEllipsoidOptions:
+    """
+    This option is used to encourage the compatible region to cover an inscribed
+    ellipsoid.
+    """
+
+    # A state that should be contained in the inscribed ellipsoid
+    x_inner: np.ndarray
+    # when we search for the ellipsoid, we put a trust region constraint. This
+    # is the squared radius of that trust region.
+    ellipsoid_trust_region: float
+    # We enlarge the inner ellipsoid through a sequence of SDPs. This is the max
+    # number of iterations in that sequence.
+    find_inner_ellipsoid_max_iter: int
+
+    def __init__(
+        self,
+        x_inner: np.ndarray,
+        ellipsoid_trust_region: float = 100.0,
+        find_inner_ellipsoid_max_iter: int = 3,
+    ):
+        self.x_inner = x_inner
+        self.ellipsoid_trust_region = ellipsoid_trust_region
+        self.find_inner_ellipsoid_max_iter = find_inner_ellipsoid_max_iter
+
+
+@dataclass
+class CompatibleStatesOptions:
+    """
+    This option is used to encourage the compatible region to include certain
+    candidate states. Namely h(x_candidate) >= 0 and V(x_candidate) <= 1.
+    """
+
+    candidate_compatible_states: np.ndarray
+    # To avoid arbitrarily scaling the CBF, we need to impose the
+    # constraint that
+    # h_anchor_bounds[i][0] <= h[i](anchor_states) <= h_anchor_bounds[i][1]
+    anchor_states: Optional[np.ndarray]
+    h_anchor_bounds: Optional[List[Tuple[np.ndarray, np.ndarray]]]
+    # To encourage the compatible region to cover the candidate states, we add
+    # this cost
+    # weight_V * ReLU(V(x_candidates) - (1-V_margin) )
+    #    + weight_h[i] * ReLU(-h[i](x_candidates) + h_margins[i])
+    weight_V: Optional[float]
+    weight_h: np.ndarray
+    # if we have HOCBF, then we also need to penalize the lower power of lie
+    # derivatives of h(x). Otherwise, the following three items should be None.
+    # for lower_lie_derivatives, the outter length is equal to the number of CBFs,
+    # the inner size is equal to the corresponding CBF's relative degree - 1.
+    relative_degrees: Optional[List[int]] = None
+    weight_lower_lie_derivatives: Optional[List[np.ndarray]] = None
+    kappah: Optional[List[List[float]]] = None
+    # If not None, then we penalize the violation of V <= 1 - V_margin
+    V_margin: Optional[float] = None
+    # If not None, then we penalize the violation of h[i] >= h_margins[i]
+    h_margins: Optional[np.ndarray] = None
+
+    def add_cost(
+        self,
+        prog: solvers.MathematicalProgram,
+        x: np.ndarray,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        f: Optional[np.ndarray] = None,
+        states: Optional[np.ndarray] = None,
+    ) -> Tuple[solvers.Binding[solvers.LinearCost], Optional[np.ndarray], np.ndarray]:
+        """
+        Adds the cost
+        weight_V * ReLU(V(x_candidates) - 1 + V_margin)
+           + weight_h[i] * ReLU(-h[i](x_candidates) + h_margins[i])
+        """
+        # check whether the input arguments are valid:
+        assert h.shape == self.weight_h.shape
+        if self.weight_lower_lie_derivatives is not None:
+            assert len(self.relative_degrees) == h.shape[0]
+            assert len(self.kappah) == h.shape[0]
+            assert len(self.weight_lower_lie_derivatives) == h.shape[0]
+            for i in range(h.shape[0]):
+                assert self.weight_lower_lie_derivatives[i].shape[0] == self.relative_degrees[i] - 1
+            lower_lie_derivative_polys = [
+                lower_lie_derivatives(
+                    poly = h[i], 
+                    vector_feild = f,
+                    variables = states,
+                    relative_degree = self.relative_degrees[i],
+                    betas = self.kappah[i],
+                    )
+                for i in range(h.shape[0])
+            ]
+
+        num_candidates = self.candidate_compatible_states.shape[0]
+        
+        # (1)
+        # Add the constraints for h_relu:
+        # Add the slack variable h_relu[i] representing ReLU(-h[i](x_candidates))
+        h_relu = prog.NewContinuousVariables(h.shape[0], num_candidates, "h_relu")
+        prog.AddBoundingBoxConstraint(0, np.inf, h_relu.reshape((-1,)))
+        for i in range(h.shape[0]):
+            A_h, h_decision_vars, b_h = h[i].EvaluateWithAffineCoefficients(
+                x, self.candidate_compatible_states.T
+            )
+            # Now impose the constraint
+            # h_relu[i] >= -h[i](x_candidates) + h_margins[i] as
+            # A_h * h_decision_vars + h_relu[i] >= - b_h + h_margins[i]
+            prog.AddLinearConstraint(
+                np.concatenate((A_h, np.eye(num_candidates)), axis=1),
+                -b_h + (0 if self.h_margins is None else self.h_margins[i]),
+                np.full_like(b_h, np.inf),
+                np.concatenate((h_decision_vars, h_relu[i])),
+            )
+        # add the cost for h_relu.
+        cost_coeff = (self.weight_h.reshape((-1, 1)) * np.ones_like(h_relu)).reshape(
+            (-1,)
+        )
+        cost_vars = h_relu.reshape((-1,))
+        
+        #(2)
+        # if V is not None, then we add the constraints for V_relu:
+        if V is not None:
+            # Add the slack variable representing ReLU(V(x_candidates)-1 + V_margin)
+            V_relu = prog.NewContinuousVariables(num_candidates, "V_relu")
+            prog.AddBoundingBoxConstraint(0, np.inf, V_relu)
+            # Now evaluate V(x_candidates) as A_v * V_decision_vars + b_v
+            A_v, V_decision_vars, b_v = V.EvaluateWithAffineCoefficients(
+                x, self.candidate_compatible_states.T
+            )
+            # Now impose the constraint V_relu >= V(x_candidates) - 1 + V_margin as
+            # V_relu - A_v * V_decision_vars >= b_v -1 + V_margin
+            prog.AddLinearConstraint(
+                np.concatenate((-A_v, np.eye(num_candidates)), axis=1),
+                b_v - 1 + (0 if self.V_margin is None else self.V_margin),
+                np.full_like(b_v, np.inf),
+                np.concatenate((V_decision_vars, V_relu)),
+            )
+            # we add the cost for V_relu:
+            assert self.weight_V is not None
+            cost_coeff = np.concatenate(
+                (cost_coeff, self.weight_V * np.ones(num_candidates))
+            )
+            assert V_relu is not None
+            cost_vars = np.concatenate((cost_vars, V_relu))
+        else:
+            V_relu = None 
+        
+        #(3)
+        # Add the constriants for the lower power of lie derivatives of h(x)
+        # here we denote relu of the lower power of lie derivatives as phi_relu
+        if self.weight_lower_lie_derivatives is not None:
+            for i in range(h.shape[0]):
+                phi_i = lower_lie_derivative_polys[i]
+                assert phi_i.shape[0] == self.relative_degrees[i] - 1
+                phi_relu_i = prog.NewContinuousVariables(phi_i.shape[0], num_candidates, "phi_relu"+str(i))
+                prog.AddBoundingBoxConstraint(0, np.inf, phi_relu_i.reshape((-1,)))
+                for j in range(phi_i.shape[0]):
+                    A_phi, phi_decision_vars, b_phi = phi_i[j].EvaluateWithAffineCoefficients(
+                        x, self.candidate_compatible_states.T
+                    )
+                    # Now impose the constraint
+                    # phi_relu_i[j] >= -phi_i[j](x_candidates) as
+                    # A_phi * phi_decision_vars + phi_relu_i[j] >= - b_phi
+                    prog.AddLinearConstraint(
+                        np.concatenate((A_phi, np.eye(num_candidates)), axis=1),
+                        -b_phi,
+                        np.full_like(b_phi, np.inf),
+                        np.concatenate((phi_decision_vars, phi_relu_i[j])),
+                    )
+                # add the cost for phi_relu_i
+                cost_coeff = np.concatenate((
+                        cost_coeff,
+                        (self.weight_lower_lie_derivatives[i].reshape((-1, 1)) * np.ones_like(phi_relu_i)).reshape((-1,))                                                                                            
+                    ))
+                cost_vars = np.concatenate(
+                    (cost_vars, phi_relu_i.reshape((-1,)))
+                    )
+                
+        
+        # finally, add the total cost to the program
+        cost = prog.AddLinearCost(cost_coeff, 0.0, cost_vars)
+        return cost, V_relu, h_relu
+    
+        
+    def add_constraint(
+        self, prog: solvers.MathematicalProgram, x: np.ndarray, h: np.ndarray
+    ) -> Optional[List[solvers.Binding[solvers.LinearConstraint]]]:
+        """
+        Add the constraint
+        h_anchor_bounds[i][0] <= h[i](anchor_states) <= h_anchor_bounds[i][1]
+        """
+        if self.h_anchor_bounds is not None:
+            assert h.shape == (len(self.h_anchor_bounds),)
+            assert self.anchor_states is not None
+            constraints: List[solvers.Binding[solvers.LinearConstraint]] = [None] * len(
+                self.h_anchor_bounds
+            )
+            for i in range(len(self.h_anchor_bounds)):
+                assert (
+                    self.h_anchor_bounds[i][0].size
+                    == self.h_anchor_bounds[i][1].size
+                    == self.anchor_states.shape[0]
+                )
+                # Evaluate h[i](anchor_states) as A_h * decision_vars_h + b_h
+                A_h, decision_vars_h, b_h = h[i].EvaluateWithAffineCoefficients(
+                    x, self.anchor_states.T
+                )
+                # Adds the constraint
+                constraints[i] = prog.AddLinearConstraint(
+                    A_h,
+                    self.h_anchor_bounds[i][0] - b_h,
+                    self.h_anchor_bounds[i][1] - b_h,
+                    decision_vars_h,
+                )
+            return constraints
+        return None
+
+
+class CompatibleClfCbf:
+    """
+    Certify and synthesize compatible Control Lyapunov Function (CLF) and
+    Control Barrier Functions (CBFs).
+
+    For a continuous-time control-affine system
+    ẋ = f(x)+g(x)u, u∈𝒰
+    A CLF V(x) and a CBF h(x) is compatible if and only if
+    ∃ u∈𝒰,      ∂h/∂x*f(x) + ∂h/∂x*g(x)*u ≥ −κ_h*h(x)
+            and ∂V/∂x*f(x) + ∂V/∂x*g(x)*u ≤ −κ_V*V(x)
+    For simplicity, let's first consider that u is un-constrained, namely 𝒰 is
+    the entire space.
+    By Farkas lemma, this is equivalent to the following set being empty
+
+    {(x, y) | [y(0)]ᵀ*[-∂h/∂x*g(x)] = 0, [y(0)]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1, y>=0}        (1)
+              [y(1)]  [ ∂V/∂x*g(x)]      [y(1)]  [-∂V/∂x*f(x)-κ_V*V(x)]                       (1)
+
+    We can then use Positivstellensatz to certify the emptiness of this set.
+
+    The same math applies to multiple CBFs, or when u is constrained within a
+    polyhedron.
+
+    When u is constrained in a polyhedron, we consider two different formulations:
+    1. Using the H-representation of the polyhedron
+       If the polyhedron is parameterized as {u | Au * u <= bu}, we know that
+       there exists u in the polyhedron satisfying the CLF and CBF condition,
+       iff the following set is empty
+
+       {(x, y) | yᵀ * [-∂h/∂x*g(x)] = 0, yᵀ * [ ∂h/∂x*f(x)+κ_h*h(x)] = -1 }                   (2)
+                      [ ∂V/∂x*g(x)]           [-∂V/∂x*f(x)-κ_V*V(x)]
+                      [         Au]           [                 bu ]
+       Namely we increase the dimensionality of y and append the equality
+       condition in (1) with Au and bu.
+    2. Using the V-representation of the polyhedron
+       If the polyhedron is parameterized as
+       u ∈ 𝒰 = ConvexHull(u¹, u², ..., uᵐ) ⊕ ConvexCone(v¹, v², ..., vⁿ)
+       where u¹, u², ..., uᵐ are the vertices of the polyhedron, and
+       v¹, v², ..., vⁿ are the extreme rays of the polyhedron, then we need to
+       certify that this set in (1) intersects with the polyhedron 𝒰, which can
+       also be done by Positivstellensatz.
+    """  # noqa E501
+
+    def __init__(
+        self,
+        *,
+        f: np.ndarray,
+        g: np.ndarray,
+        x: np.ndarray,
+        exclude_sets: List[ExcludeSet],
+        within_set: Optional[WithinSet],
+        Au: Optional[np.ndarray] = None,
+        bu: Optional[np.ndarray] = None,
+        u_vertices: Optional[np.ndarray] = None,
+        u_extreme_rays: Optional[np.ndarray] = None,
+        num_cbf: int = 1,
+        with_clf: bool = True,
+        use_y_squared: bool = True,
+        state_eq_constraints: Optional[np.ndarray] = None,
+        verify_cbf_correctness: bool = True,
+    ):
+        """
+        Args:
+          f: np.ndarray
+            An array of symbolic polynomials. The dynamics is ẋ = f(x)+g(x)u.
+            The shape is (nx,)
+          g: np.ndarray
+            An array of symbolic polynomials. The dynamics is ẋ = f(x)+g(x)u.
+            The shape is (nx, nu)
+          x: np.ndarray
+            An array of symbolic variables representing the state.
+            The shape is (nx,)
+          exclude_sets: List[ExcludeSet]
+            A list of "unsafe sets", namely the union of these ExcludeSet is the unsafe region.
+          within_set: Optional[WithinSet]
+            If not None, then the state has to be within this `within_set`.
+          Au: Optional[np.ndarray]
+          bu: Optional[np.ndarray]
+            Au and bu describe the set of admissible control as an H-rep polyhedron {u | Au * u <= bu}
+            The shape of Au (Any, nu), the shape of bu is (Any,)
+          u_vertices: Optional[np.ndarray]
+          u_extreme_rays: Optional[np.ndarray]
+            u_vertices and u_extreme_rays describe the set of admissible
+            control as a V-rep polyhedron.
+            The set of admissible control is
+            u ∈𝒰 = ConvexHull(u_vertices[0], u_vertices[1], ..., u_vertices[-1])
+                   ⊕ ConvexCone(u_extreme_rays[0], u_extreme_rays[1], ..., u_extreme_rays[-1])
+            Note that we cannot use both the H-rep and V-rep for the admissible
+            control simultaneously.
+          num_cbf: int
+            The number of CBF functions. We require these CBF functions to be
+            compatible in the intersection of their 0-superlevel-set.
+          with_clf: bool
+            Whether to certify or search for CLF. If set to False, then we will
+            certify or search multiple compatible CBFs without CLF.
+          use_y_squared: bool
+            For that empty set in the class documentation, we could replace
+            y>=0 condition with using y². This will potentially reduce the
+            number of Lagrangian multipliers in the p-satz, but increase the
+            total degree of the polynomials. Set use_y_squared=True if we use
+            y², and we certify the set
+
+            {(x, y) | [y(0)²]ᵀ*[-∂h/∂x*g(x)] = 0, [y(0)²]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1}       (2)
+                      [y(1)²]  [ ∂V/∂x*g(x)]      [y(1)²]  [-∂V/∂x*f(x)-κ_V*V(x)]
+            is empty.
+          state_eq_constraints: An array of polynomials. Some dynamical systems
+            have equality constraints on its states. For example, when the
+            state include sinθ and cosθ (so that the dynamics is a polynomial
+            function of state), we need to impose the equality constraint
+            sin²θ+cos²θ=1 on the state. state_eq_constraints[i] = 0 is an
+            equality constraint on the state.
+
+          If both Au and bu are None, it means that we don't have input limits.
+          They have to be both None or both not None.
+        """  # noqa E501
+        assert len(f.shape) == 1
+        assert len(g.shape) == 2
+        self.nx: int = f.shape[0]
+        self.nu: int = g.shape[1]
+        assert g.shape == (self.nx, self.nu)
+        assert x.shape == (self.nx,)
+        self.f = f
+        self.g = g
+        self.x = x
+        self.x_set: sym.Variables = sym.Variables(x)
+        check_array_of_polynomials(f, self.x_set)
+        check_array_of_polynomials(g, self.x_set)
+        if verify_cbf_correctness:
+            assert (exclude_sets!=[]) or (within_set is not None), "The exclude_sets and within_set cannot be both None"
+        self.exclude_sets = exclude_sets
+        self.within_set = within_set
+        assert (Au is None) == (bu is None)
+        if Au is not None:
+            assert Au.shape[1] == self.nu
+            assert bu is not None
+            assert bu.shape == (Au.shape[0],)
+            assert (
+                u_vertices is None and u_extreme_rays is None
+            ), "Cannot use both (Au, bu) and (u_vertices, u_extreme_rays)"
+        self.Au = Au
+        self.bu = bu
+        if u_vertices is not None:
+            assert u_vertices.shape[1] == self.nu
+        if u_extreme_rays is not None:
+            assert u_extreme_rays.shape[1] == self.nu
+        if u_vertices is not None or u_extreme_rays is not None:
+            assert (
+                Au is None and bu is None
+            ), "Cannot use both (Au, bu) and (u_vertices, u_extreme_rays)"
+        self.u_vertices = u_vertices
+        self.u_extreme_rays = u_extreme_rays
+        self.with_clf = with_clf
+        self.use_y_squared = use_y_squared
+        self.num_cbf = num_cbf
+        y_size = (
+            self.num_cbf
+            + (1 if self.with_clf else 0)
+            + (self.Au.shape[0] if self.Au is not None else 0)
+        )
+        self.y: np.ndarray = sym.MakeVectorContinuousVariable(y_size, "y")
+        self.y_set: sym.Variables = sym.Variables(self.y)
+        self.xy_set: sym.Variables = sym.Variables(np.concatenate((self.x, self.y)))
+        # y_poly[i] is just the polynomial y[i]. I wrote it in this more complicated
+        # form to save some computation.
+        self.y_poly = np.array(
+            [sym.Polynomial(sym.Monomial(self.y[i], 1)) for i in range(y_size)]
+        )
+        # y_squared_poly[i] is just the polynomial y[i]**2.
+        self.y_squared_poly = np.array(
+            [sym.Polynomial(sym.Monomial(self.y[i], 2)) for i in range(y_size)]
+        )
+        self.state_eq_constraints = state_eq_constraints
+        if self.state_eq_constraints is not None:
+            check_array_of_polynomials(self.state_eq_constraints, self.x_set)
+
+    def certify_cbf_safety_set(
+        self,
+        h: np.ndarray,
+        lagrangian_degrees: SafetySetLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Optional[SafetySetLagrangians]:
+        """
+        Certify the 0-super level set of the barrier function cbf(x) is within
+        the safety set.
+        """
+        if self.exclude_sets == []:
+            assert len(lagrangian_degrees.exclude) == 0
+            exclude_lagrangians = []
+        else:
+            assert len(self.exclude_sets) == len(lagrangian_degrees.exclude)
+            exclude_lagrangians = [
+                self.certify_cbf_exclude(
+                    i,
+                    h,
+                    lagrangian_degrees.exclude[i],
+                    solver_id,
+                    solver_options,
+                    lagrangian_coefficient_tol,
+                )
+                for i in range(len(self.exclude_sets))
+            ]
+            if not all(exclude_lagrangians):
+                return None
+        
+        if self.within_set is None:
+            assert len(lagrangian_degrees.within) == 0
+            within_lagrangians = []
+        else:
+            assert self.within_set.l.shape[0] == len(lagrangian_degrees.within)
+            within_lagrangians = [
+                self.certify_cbf_within(
+                    i,
+                    h,
+                    lagrangian_degrees.within[i],
+                    solver_id,
+                    solver_options,
+                    lagrangian_coefficient_tol,
+                )
+                for i in range(len(self.within_set.l))
+            ]
+            if not all(within_lagrangians):
+                return None
+
+        return SafetySetLagrangians(
+            exclude=exclude_lagrangians, within=within_lagrangians
+        )
+
+    def certify_cbf_within(
+        self,
+        within_index: int,
+        h: np.ndarray,
+        lagrangian_degrees: WithinRegionLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Optional[WithinRegionLagrangians]:
+        """
+        Certify the 0-super level set of barrier function h(x) is within the
+        region {x|self.within_set.l[within_index](x) <= 0}
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set)
+        self._add_barrier_within_constraint(prog, within_index, h, lagrangians)
+        result = solve_with_id(prog, solver_id, solver_options)
+        lagrangians_result = (
+            lagrangians.get_result(result, lagrangian_coefficient_tol)
+            if result.is_success()
+            else None
+        )
+        return lagrangians_result
+
+    def certify_cbf_exclude(
+        self,
+        exclude_set_index: int,
+        h: np.ndarray,
+        lagrangian_degrees: ExcludeRegionLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+    ) -> Optional[ExcludeRegionLagrangians]:
+        """
+        Certifies that the 0-superlevel set {x | hᵢ(x) >= 0} does not intersect
+        with the unsafe region {x | self.exclude_sets[exclude_set_index].l(x) <= 0}
+
+        If we denote the unsafe region as {x | p(x) <= 0}, then we impose the constraint
+
+        We impose the constraint
+        -(1+ϕᵢ,₀(x))*hᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
+
+        Args:
+          exclude_set_index: We certify the CBF for the region
+            {x | self.exclude_sets[exclude_set_index].l(x) <= 0}
+          cbf: hᵢ(x) in the documentation above.
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, self.x_set)
+        self._add_barrier_exclude_constraint(prog, exclude_set_index, h, lagrangians)
+        result = solve_with_id(prog, solver_id, solver_options)
+        lagrangians_result = (
+            lagrangians.get_result(result, lagrangian_coefficient_tol)
+            if result.is_success()
+            else None
+        )
+        return lagrangians_result
+
+    def construct_search_compatible_lagrangians(
+        self,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: List[int],
+        lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
+        barrier_eps: Optional[np.ndarray],
+        local_clf: bool = True,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> Tuple[
+        solvers.MathematicalProgram,
+        Union[CompatibleLagrangians, CompatibleWVrepLagrangians],
+    ]:
+        """
+        Given CLF candidate V and CBF candidate h, construct the optimization
+        program to certify that they are compatible within the region
+        {x | V(x) <= 1} ∩ {x | h(x) >= -eps}.
+
+        Args:
+          V: The CLF candidate. If empty, then we will certify that the multiple
+            barrier functions are compatible.
+          h: The CBF candidates.
+          kappa_V: The exponential decay rate for CLF. Namely we want V̇ ≤ −κ_V*V
+          kappa_h: The exponential rate for CBF, namely we want ḃ ≥ −κ_h*h
+          lagrangian_degrees: The degrees for the Lagrangian polynomials.
+          barrier_eps: The certified safe region is {x | h(x) >= -eps}
+          coefficient_tol: In the Lagrangian polynomials, we will remove the
+            coefficients no larger than this tolerance.
+          local_clf: Whether the CLF is valid in a local region or globally.
+        Returns:
+          result: The result for solving the optimization program.
+          lagrangian_result: The result of the Lagrangian polynomials.
+        """
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.xy_set)
+        lagrangians = lagrangian_degrees.to_lagrangians(
+            prog, self.x_set, self.y_set, sos_type=lagrangian_sos_type
+        )
+
+        xi, lambda_mat = self._calc_xi_Lambda(
+            V=V, 
+            h=h, 
+            kappa_V=kappa_V, 
+            kappa_h=kappa_h, 
+            relative_degrees=relative_degrees
+        )
+
+        if self.u_vertices is not None or self.u_extreme_rays is not None:
+            assert isinstance(lagrangians, CompatibleWVrepLagrangians)
+            self._add_compatibility_w_vrep(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=lagrangians,
+                barrier_eps=barrier_eps,
+                kappa_h=kappa_h,
+                relative_degrees=relative_degrees,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
+        else:
+            assert isinstance(lagrangians, CompatibleLagrangians)
+            self._add_compatibility(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=lagrangians,
+                barrier_eps=barrier_eps,
+                kappa_h=kappa_h,
+                relative_degrees=relative_degrees,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
+        return (prog, lagrangians)
+
+    def search_lagrangians_given_clf_cbf(
+        self,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        barrier_eps: np.ndarray,
+        relative_degrees: List[int],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
+        safety_set_lagrangian_degrees: SafetySetLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        record_time: bool = False,
+    ) -> Tuple[
+        Optional[CompatibleLagrangians],
+        Optional[SafetySetLagrangians],
+    ]:
+        start_time = 0
+        end_time = 0
+        (
+            prog_compatible,
+            compatible_lagrangians,
+        ) = self.construct_search_compatible_lagrangians(
+            V,
+            h,
+            kappa_V,
+            kappa_h,
+            relative_degrees,
+            compatible_lagrangian_degrees,
+            barrier_eps,
+            local_clf=True,
+            lagrangian_sos_type=lagrangian_sos_type,
+            compatible_sos_type=compatible_sos_type,
+        )
+        if record_time:
+            start_time = time.time()
+        result_compatible = solve_with_id(prog_compatible, solver_id, solver_options)
+        if record_time:
+            end_time = time.time()
+            print(f"Time for feasibility prog: {end_time - start_time}")
+        
+        compatible_lagrangians_result = (
+            compatible_lagrangians.get_result(
+                result_compatible, lagrangian_coefficient_tol
+            )
+            if result_compatible.is_success()
+            else None
+        )
+        if record_time:
+            start_time = time.time()
+        safety_set_lagrangians_result = self.certify_cbf_safety_set(
+            h,
+            safety_set_lagrangian_degrees,
+            solver_id,
+            solver_options,
+            lagrangian_coefficient_tol,
+        )
+        if record_time:
+            end_time = time.time()
+            print(f"Time for safety set prog: {end_time - start_time}")
+        
+        return compatible_lagrangians_result, safety_set_lagrangians_result
+
+    def construct_search_continuity_lagrangians(
+        self,
+        V: sym.Polynomial,
+        h: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: List[int],
+        continuity_lagrangian_degrees: ContinuityLagrangianDegrees,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        continuity_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    )-> Tuple[
+        solvers.MathematicalProgram,
+        ContinuityLagrangians,
+    ]:
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.xy_set)
+        lagrangians = continuity_lagrangian_degrees.to_lagrangians(
+            prog, self.x_set, self.y_set, sos_type=lagrangian_sos_type
+        )
+
+        xi, lambda_mat = self._calc_xi_Lambda(
+            V=V, 
+            h=h, 
+            kappa_V=kappa_V, 
+            kappa_h=kappa_h, 
+            relative_degrees=relative_degrees
+        )
+
+        self._add_continuity_constraint(
+            prog=prog,
+            V=V,
+            h=h,
+            xi_vector=xi,
+            lambda_matrix=lambda_mat,
+            lagrangians=lagrangians,
+            kappa_h=kappa_h,
+            relative_degrees=relative_degrees,
+            sos_type=continuity_sos_type,
+        )
+
+        return (prog, lagrangians)
+
+    def search_continuity_lagrangians_given_clf_cbf(
+        self, 
+        V: sym.Polynomial,
+        h: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: List[int],
+        continuity_lagragian_degrees: ContinuityLagrangianDegrees,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    )-> Optional[ContinuityLagrangians]:
+        (
+            prog_continuity,
+            continuity_lagrangians,
+        ) = self.construct_search_continuity_lagrangians(
+            V,
+            h,
+            kappa_V,
+            kappa_h,
+            relative_degrees,
+            continuity_lagragian_degrees,
+        )
+
+        result_continuity = solve_with_id(prog_continuity, solver_id, solver_options)
+        continuity_lagrangians_result = (
+            continuity_lagrangians.get_result(
+                result_continuity, lagrangian_coefficient_tol
+            )
+            if result_continuity.is_success()
+            else None
+        )
+
+        return continuity_lagrangians_result
+
+    def construct_search_nominal_compatible_lagrangians(
+            self,
+            V: Optional[sym.Polynomial],
+            h: np.ndarray,
+            kappa_V: Optional[float],
+            kappa_h: List[List[float]],
+            relative_degrees: List[int],
+            nominal_compatible_degrees: NominalCompatibleLagrangianDegrees,
+            epsilon: float,
+            lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+            compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+            local_clf: bool = True,
+        )-> Tuple[
+            solvers.MathematicalProgram,
+            NominalCompatibleLagrangians,
+        ]:
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.x_set)
+        lagrangians = nominal_compatible_degrees.to_largrangians(
+            prog, self.x_set, sos_type=lagrangian_sos_type
+        )
+        xi, lambda_mat = self._calc_xi_Lambda(
+            V=V,
+            h=h,
+            kappa_V=kappa_V,
+            kappa_h=kappa_h,
+            relative_degrees=relative_degrees
+        )
+        self._add_nominal_controller_compatibility(
+            prog=prog,
+            V=V,
+            h=h,
+            xi_vector=xi,
+            lambda_matrix=lambda_mat,
+            epsilon=epsilon,
+            lagrangians=lagrangians,
+            sos_type=compatible_sos_type,
+            local_clf=local_clf,
+        )
+        return (prog, lagrangians)
+
+    def search_nominal_controller_lagragians_given_clf_cbf(
+        self,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: List[int],
+        nominal_compatible_degrees: NominalCompatibleLagrangianDegrees,
+        epsilon: float,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        local_clf: bool = True,
+    )-> Optional[NominalCompatibleLagrangians]:
+        (
+            prog_nominal,
+            nominal_lagrangians,
+        )= self.construct_search_nominal_compatible_lagrangians(
+            V,
+            h,
+            kappa_V,
+            kappa_h,
+            relative_degrees,
+            nominal_compatible_degrees,
+            epsilon,
+            lagrangian_sos_type=lagrangian_sos_type,
+            compatible_sos_type=compatible_sos_type,
+            local_clf=local_clf,
+        )
+        result_nominal = solve_with_id(prog_nominal, solver_id, solver_options)
+        nominal_lagrangians_result = (
+            nominal_lagrangians.get_result(
+                result_nominal, lagrangian_coefficient_tol
+            )
+            if result_nominal.is_success()
+            else None
+        )
+        return nominal_lagrangians_result
+
+    def search_clf_cbf_given_lagrangian(
+        self,
+        compatible_lagrangians: Union[
+            CompatibleLagrangians, CompatibleWVrepLagrangians
+        ],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
+        safety_sets_lagrangians: SafetySetLagrangians,
+        safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        cbf_states: List[np.ndarray],
+        x_equilibrium: Optional[np.ndarray],
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: List[int],
+        barrier_eps: np.ndarray,
+        *,
+        ellipsoid_inner: Optional[ellipsoid_utils.Ellipsoid] = None,
+        compatible_states_options: Optional[CompatibleStatesOptions] = None,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        backoff_rel_scale: Optional[float] = None,
+        backoff_abs_scale: Optional[float] = None,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,  # noqa
+    ) -> Tuple[
+        Optional[sym.Polynomial],
+        Optional[np.ndarray],
+        solvers.MathematicalProgramResult,
+    ]:
+        """
+        Given the Lagrangian multipliers and an inner ellipsoid, find the clf
+        and cbf, such that the compatible region contains that inner ellipsoid.
+
+        Returns: (V, h, result)
+          V: The CLF result.
+          h: The CBF result.
+          result: The result of the optimization program.
+        """
+        prog, V, h = self._construct_search_clf_cbf_program(
+            compatible_lagrangians,
+            compatible_lagrangian_degrees,
+            safety_sets_lagrangians,
+            safety_sets_lagrangian_degrees,
+            clf_degree,
+            cbf_degrees,
+            cbf_states,
+            x_equilibrium,
+            kappa_V,
+            kappa_h,
+            relative_degrees,
+            barrier_eps,
+            compatible_sos_type=compatible_sos_type,
+            compatible_lagrangian_sos_type=compatible_lagrangian_sos_type,
+        )
+
+        if ellipsoid_inner is not None:
+            self._add_ellipsoid_in_compatible_region_constraint(
+                prog, V, h, ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c
+            )
+        elif compatible_states_options is not None:
+            self._add_compatible_states_options(prog, V, h, compatible_states_options)
+
+        result = solve_with_id(
+            prog, solver_id, solver_options, backoff_rel_scale, backoff_abs_scale
+        )
+        if result.is_success():
+            V_sol = None if V is None else result.GetSolution(V)
+            h_sol = np.array([result.GetSolution(h_i) for h_i in h])
+        else:
+            V_sol = None
+            h_sol = None
+        return V_sol, h_sol, result
+
+    def binary_search_clf_cbf(
+        self,
+        compatible_lagrangians: Union[
+            CompatibleLagrangians, CompatibleWVrepLagrangians
+        ],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
+        safety_sets_lagrangians: SafetySetLagrangians,
+        safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        cbf_states: List[np.ndarray],
+        x_equilibrium: Optional[np.ndarray],
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: List[int],
+        barrier_eps: np.ndarray,
+        ellipsoid_inner: ellipsoid_utils.Ellipsoid,
+        scale_options: BinarySearchOptions,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+    ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
+        """
+        Given the Lagrangian multipliers, find the compatible CLF and CBFs,
+        with the goal to enlarge the compatible region.
+
+        We measure the size of the compatible region through binary searching
+        the inner ellipsoid. We scale the inner ellipsoid about its center,
+        and binary search on the scaling factor.
+
+        Args:
+          scale_options: The options to do binary search on the scale of the einner
+          ellipsoid.
+
+        Return: (V, h)
+        """
+        assert isinstance(scale_options, BinarySearchOptions)
+
+        def search(
+            scale,
+        ) -> Tuple[
+            Optional[sym.Polynomial],
+            Optional[np.ndarray],
+            solvers.MathematicalProgramResult,
+        ]:
+            c_new = ellipsoid_utils.scale_ellipsoid(
+                ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c, scale
+            )
+            V, h, result = self.search_clf_cbf_given_lagrangian(
+                compatible_lagrangians,
+                compatible_lagrangian_degrees,
+                safety_sets_lagrangians,
+                safety_sets_lagrangian_degrees,
+                clf_degree,
+                cbf_degrees,
+                cbf_states,
+                x_equilibrium,
+                kappa_V,
+                kappa_h,
+                relative_degrees,
+                barrier_eps,
+                ellipsoid_inner=ellipsoid_utils.Ellipsoid(
+                    ellipsoid_inner.S, ellipsoid_inner.b, c_new
+                ),
+                compatible_states_options=None,
+                solver_id=solver_id,
+                solver_options=solver_options,
+            )
+            return V, h, result
+
+        scale_options.check()
+
+        scale_min = scale_options.min
+        scale_max = scale_options.max
+        scale_tol = scale_options.tol
+
+        V, h, result = search(scale_max)
+        if result.is_success():
+            print(f"binary_search_clf_cbf: scale={scale_max} is feasible.")
+            assert h is not None
+            return V, h
+
+        V_success, h_success, result = search(scale_min)
+        assert (
+            result.is_success()
+        ), f"binary_search_clf_cbf: scale_min={scale_min} is not feasible."
+        assert h_success is not None
+
+        while scale_max - scale_min > scale_tol:
+            scale = (scale_max + scale_min) / 2
+            V, h, result = search(scale)
+            if result.is_success():
+                print(f"binary_search_clf_cbf: scale={scale} is feasible.")
+                scale_min = scale
+                V_success = V
+                assert h is not None
+                h_success = h
+            else:
+                print(f"binary_search_clf_cbf: scale={scale} is not feasible.")
+                scale_max = scale
+
+        return V_success, h_success
+
+    def in_compatible_region(
+        self,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        x_samples: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Returns if x_samples[i] is in the compatible region
+        {x | V(x) <= 1, h(x) >= 0}.
+
+        Return:
+        in_compatible_flag: in_compatible_flag[i] is True iff x_samples[i] is
+          in the compatible region.
+        """
+        in_h = np.all(
+            np.concatenate(
+                [
+                    (h_i.EvaluateIndeterminates(self.x, x_samples.T) >= 0).reshape(
+                        (-1, 1)
+                    )
+                    for h_i in h
+                ],
+                axis=1,
+            ),
+            axis=1,
+        )
+        if V is not None:
+            in_V = V.EvaluateIndeterminates(self.x, x_samples.T) <= 1
+            return np.logical_and(in_h, in_V)
+        else:
+            return in_h
+
+    def bilinear_alternation(
+        self,
+        V_init: Optional[sym.Polynomial],
+        h_init: np.ndarray,
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
+        safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        barrier_eps: np.ndarray,
+        relative_degree: List[int],
+        x_equilibrium: np.ndarray,
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        cbf_states: List[np.ndarray],
+        max_iter: int,
+        *,
+        synthesis_time_record = False,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        lagrangian_coefficient_tol_list: Optional[List[float]] = None,
+        inner_ellipsoid_options: Optional[InnerEllipsoidOptions] = None,
+        binary_search_scale_options: Optional[BinarySearchOptions] = None,
+        compatible_states_options: Optional[CompatibleStatesOptions] = None,
+        backoff_scale_list: Optional[List[compatible_clf_cbf.utils.BackoffScale]] = None,
+        lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
+        """
+        Synthesize the compatible CLF and CBF through bilinear alternation. We
+        alternate between
+        1. Fixing the CLF/CBF, searching for Lagrangians.
+        2. Fixing Lagrangians, searching for CLF/CBF.
+
+        Our goal is to find the compatible CLF and CBFs with the largest compatible
+        region. We cannot measure the volume of the compatible region directly, so we
+        use one of the following heuristics to grow the compatible region:
+        1. Grow the inscribed ellipsoid within the compatible region.
+        2. Expand the compatible region to cover some candidate states.
+
+        I strongly recommend using heuristics 2 (covering candidate states)
+        instead of 1 (grow the inscribed ellipsoid).
+
+        Args:
+          max_iter: The maximal number of bilinear alternation iterations.
+          lagrangian_coefficient_tol: We remove the coefficients whose absolute
+            value is smaller than this tolerance in the Lagrangian polynomials.
+            Use None to preserve all coefficients.
+        """
+
+        if lagrangian_coefficient_tol_list is not None:
+            assert len(lagrangian_coefficient_tol_list) == max_iter
+        if backoff_scale_list is not None:
+            assert len(backoff_scale_list) == max_iter
+
+        # One and only one of inner_ellipsoid_options and compatible_states_options is
+        # None.
+        assert (
+            inner_ellipsoid_options is not None and compatible_states_options is None
+        ) or (inner_ellipsoid_options is None and compatible_states_options is not None)
+        if inner_ellipsoid_options is not None:
+            assert binary_search_scale_options is not None
+            raise Warning(
+                "inner_ellipsoid_options isn't None. This will grow the "
+                "inscribed ellipsoid. I strongly recommend to use the other "
+                "heuristics to cover candidate states, by setting "
+                "compatible_states_options."
+            )
+        assert isinstance(binary_search_scale_options, Optional[BinarySearchOptions])
+        assert isinstance(compatible_states_options, Optional[CompatibleStatesOptions])
+
+        iteration = 0
+        clf = V_init
+        assert len(h_init) == self.num_cbf
+        cbf = h_init
+
+        compatible_lagrangians = None
+        safety_sets_lagrangians = None
+
+        def evaluate_compatible_states(
+                clf_fun: Optional[sym.Polynomial], 
+                cbf_funs: np.ndarray, 
+                x_val: np.ndarray,
+                with_HOCBF: bool = False
+                ) -> None:
+            if clf_fun is not None:
+                V_candidates = clf_fun.EvaluateIndeterminates(self.x, x_val.T)
+                print(f"V(candidate_compatible_states)={V_candidates}")
+            h_candidates = [
+                h_i.EvaluateIndeterminates(
+                    self.x,
+                    x_val.T,
+                )
+                for h_i in cbf_funs
+            ]
+            for i, h_candidates_val in enumerate(h_candidates):
+                print(f"h[{i}](candidate_compatible_states)={h_candidates_val}")
+            
+            if with_HOCBF:
+                for i in range(len(cbf_funs)):
+                    print(f"lower lie derivatives of h[{i}]: ")
+                    phi_i = lower_lie_derivatives(
+                            poly=cbf_funs[i],
+                            vector_feild=self.f,
+                            variables=self.x,
+                            relative_degree=relative_degree[i],
+                            betas = kappa_h[i],
+                        )
+                    for j in range(phi_i.shape[0]):
+                        Phi_i_j_candidates = phi_i[j].EvaluateIndeterminates(
+                            self.x,
+                            x_val.T,
+                        )
+                        print(f"phi_{i}_{j}={Phi_i_j_candidates}")
+
+
+        synthesis_time_total = 0
+
+        for iteration in range(max_iter):
+            print(f"iteration {iteration}")
+            # Search for the Lagrangians.
+            (
+                compatible_lagrangians,
+                safety_sets_lagrangians,
+            ) = self.search_lagrangians_given_clf_cbf(
+                clf,
+                cbf,
+                kappa_V,
+                kappa_h,
+                barrier_eps,
+                relative_degree,
+                compatible_lagrangian_degrees,
+                safety_sets_lagrangian_degrees,
+                solver_id,
+                solver_options,
+                lagrangian_coefficient_tol=(
+                    lagrangian_coefficient_tol_list[iteration]
+                    if lagrangian_coefficient_tol_list is not None
+                    else None
+                ),
+                lagrangian_sos_type=lagrangian_sos_type,
+                compatible_sos_type=compatible_sos_type,
+            )
+            assert compatible_lagrangians is not None
+            assert safety_sets_lagrangians is not None
+            print("verification completed.")
+            
+
+            print("Evaluation Before Synthesis: ")
+            if compatible_states_options is not None:
+                evaluate_compatible_states(
+                    clf, cbf, compatible_states_options.candidate_compatible_states
+                )
+
+
+
+            if inner_ellipsoid_options is not None:
+                # We use the heuristics to grow the inner ellipsoid.
+                assert compatible_states_options is None
+                # Search for the inner ellipsoid.
+                V_contain_ellipsoid_lagrangian_degree = (
+                    self._get_V_contain_ellipsoid_lagrangian_degree(clf)
+                )
+                h_contain_ellipsoid_lagrangian_degree = (
+                    self._get_h_contain_ellipsoid_lagrangian_degrees(cbf)
+                )
+                (
+                    S_ellipsoid_inner,
+                    b_ellipsoid_inner,
+                    c_ellipsoid_inner,
+                ) = self._find_max_inner_ellipsoid(
+                    clf,
+                    cbf,
+                    V_contain_ellipsoid_lagrangian_degree,
+                    h_contain_ellipsoid_lagrangian_degree,
+                    inner_ellipsoid_options.x_inner,
+                    solver_id=solver_id,
+                    solver_options=solver_options,
+                    max_iter=inner_ellipsoid_options.find_inner_ellipsoid_max_iter,
+                    trust_region=inner_ellipsoid_options.ellipsoid_trust_region,
+                )
+
+                assert binary_search_scale_options is not None
+                clf, cbf = self.binary_search_clf_cbf(
+                    compatible_lagrangians,
+                    compatible_lagrangian_degrees,
+                    safety_sets_lagrangians,
+                    safety_sets_lagrangian_degrees,
+                    clf_degree,
+                    cbf_degrees,
+                    cbf_states,
+                    x_equilibrium,
+                    kappa_V,
+                    kappa_h,
+                    relative_degree,
+                    barrier_eps,
+                    ellipsoid_utils.Ellipsoid(
+                        S_ellipsoid_inner, b_ellipsoid_inner, c_ellipsoid_inner
+                    ),
+                    binary_search_scale_options,
+                    solver_id,
+                    solver_options,
+                )
+            else:
+                backoff_scale = (
+                    backoff_scale_list[iteration] 
+                    if backoff_scale_list is not None 
+                    else None)
+                # We use the heuristics to cover some candidate states with the
+                # compatible region.
+                assert compatible_states_options is not None
+
+                synthesis_start_time = time.time()
+                clf, cbf, result = self.search_clf_cbf_given_lagrangian(
+                    compatible_lagrangians,
+                    compatible_lagrangian_degrees,
+                    safety_sets_lagrangians,
+                    safety_sets_lagrangian_degrees,
+                    clf_degree,
+                    cbf_degrees,
+                    cbf_states,
+                    x_equilibrium,
+                    kappa_V,
+                    kappa_h,
+                    relative_degree,
+                    barrier_eps,
+                    ellipsoid_inner=None,
+                    compatible_states_options=compatible_states_options,
+                    solver_id=solver_id,
+                    solver_options=solver_options,
+                    backoff_rel_scale=(
+                        None if backoff_scale is None else backoff_scale.rel
+                    ),
+                    backoff_abs_scale=(
+                        None if backoff_scale is None else backoff_scale.abs
+                    ),
+                    compatible_sos_type=compatible_sos_type,
+                    compatible_lagrangian_sos_type=lagrangian_sos_type,
+                )
+                synthesis_end_time = time.time()
+                synthesis_time_total += (synthesis_end_time - synthesis_start_time)
+                assert cbf is not None
+            print("synthesis completed.")
+            
+
+            print("Evaluation After Synthesis: ")
+            if compatible_states_options is not None:
+                evaluate_compatible_states(
+                    clf, cbf, compatible_states_options.candidate_compatible_states, with_HOCBF=True
+                )
+
+        if synthesis_time_record:
+            synthesis_time_ave = synthesis_time_total / max_iter
+            print(f"Average synthesis time: {synthesis_time_ave}")
+            
+        return clf, cbf
+        
+    def check_compatible_at_state(
+        self,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        x_val: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: np.ndarray,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+    ) -> Tuple[bool, solvers.MathematicalProgramResult]:
+        """
+        Check if at a given state the CLF and CBFs are compatible, namely there
+        exists a common u such that
+        Vdot(x, u) <= -kappa_V * V
+        hdot(x, u) >= -kappa_h * h
+        """
+        prog = solvers.MathematicalProgram()
+        u = prog.NewContinuousVariables(self.nu, "u")
+        if self.Au is not None:
+            assert self.bu is not None
+            prog.AddLinearConstraint(
+                self.Au, np.full_like(self.bu, -np.inf), self.bu, u
+            )
+        assert x_val.shape == (self.nx,)
+        env = {self.x[i]: x_val[i] for i in range(self.nx)}
+        f_val = np.array([f_i.Evaluate(env) for f_i in self.f])
+        g_val = np.array(
+            [
+                [self.g[i, j].Evaluate(env) for j in range(self.nu)]
+                for i in range(self.nx)
+            ]
+        )
+        if V is not None:
+            assert kappa_V is not None
+            V_val = V.Evaluate(env)
+            dVdx = V.Jacobian(self.x)
+            dVdx_val = np.array([dVdx[i].Evaluate(env) for i in range(self.nx)])
+            dVdx_times_f_val = dVdx_val.dot(f_val)
+            dVdx_times_g_val = dVdx_val @ g_val
+            prog.AddLinearConstraint(
+                dVdx_times_f_val + dVdx_times_g_val @ u <= -kappa_V * V_val
+            )
+        for h_i in h:
+            h_val = h_i.Evaluate(env)
+            dhdx = h_i.Jacobian(self.x)
+            dhdx_val = np.array([dhdx[i].Evaluate(env) for i in range(self.nx)])
+            dhdx_times_f_val = dhdx_val.dot(f_val)
+            dhdx_times_g_val = dhdx_val @ g_val
+            prog.AddLinearConstraint(
+                dhdx_times_f_val + dhdx_times_g_val @ u >= -kappa_h * h_val
+            )
+        if self.Au is not None and self.bu is not None:
+            prog.AddLinearConstraint(
+                self.Au, np.full_like(self.bu, -np.inf), self.bu, u
+            )
+        result = solve_with_id(prog, solver_id, solver_options)
+        return result.is_success(), result
+
+    def _calc_xi_Lambda(
+        self,
+        *,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        kappa_V: Optional[float],
+        kappa_h: list[list[float]],
+        relative_degrees: list[int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute
+        Λ(x) = [-∂b/∂x*g(x)]
+               [ ∂V/∂x*g(x)]
+               [        Au ]
+        ξ(x) = [ ∂b/∂x*f(x)+κ_b*b(x)]
+               [-∂V/∂x*f(x)-κ_V*V(x)]
+               [                 bu ]
+
+        Args:
+          V: The CLF function. If with_clf is False, then V is None.
+          b: An array of CBFs. b[i] is the CBF for the i'th unsafe region.
+          kappa_V: κ_V in the documentation above.
+          kappa_b: κ_b in the documentation above. 
+                   This is a list of lists, kappa_b[i] is the kappas for b[i].
+                   and kappa_b[i][j] is the j-th kappa for high relative degree b[i].
+          relative_degrees: A list of integers that specifies realtive degree for each of the cbf. 
+        Returns:
+          (xi, lambda_mat) ξ(x) and Λ(x) in the documentation above.
+        """
+        
+        # make sure detail information matches:
+        assert h.shape[0] == len(relative_degrees), "Each cbf should have a corresponding realtive degree"
+        assert h.shape[0] == len(kappa_h), "Each cbf should have a set of corresponding betas"
+
+        # create an empty matrix and vector for lambda and xi.
+        num_of_cbf = h.shape[0]
+        lambda_rows = num_of_cbf
+        if self.with_clf:
+            assert V is not None
+            assert isinstance(V, sym.Polynomial)
+            lambda_rows += 1
+        if self.Au is not None:
+            lambda_rows += self.Au.shape[0]
+        lambda_matrix = np.empty((lambda_rows, self.nu), dtype=object)
+        xi_vector = np.empty(lambda_rows, dtype=object)
+
+        # loading the CBF constraints:
+        for i in range(num_of_cbf):
+            h_x = h[i]
+            r = relative_degrees[i]
+            beta_vector = elementary_symetric_polynomials(kappa_h[i])
+            lie_derivative_vector = np.array([
+                lie_derivative(poly=h_x, vector_feild=self.f, variables=self.x, pow=j) 
+                for j in range(r, -1, -1)
+            ])
+            xi_element = np.dot(lie_derivative_vector, beta_vector)
+            xi_vector[i]=xi_element
+            
+            Lfb_r_1 = lie_derivative(poly=h_x, vector_feild=self.f, variables=self.x, pow = r-1)
+            LfLgb = lie_derivative(poly=Lfb_r_1, vector_feild=self.g, variables=self.x, pow = 1)
+            lambda_element = -LfLgb
+            lambda_matrix[i] = lambda_element
+        
+        # loading the CLF constraints:
+        if self.with_clf:
+            alpha = kappa_V
+            LfV = lie_derivative(poly=V, vector_feild=self.f, variables=self.x, pow=1)
+            xi_element = -LfV - alpha*V
+            #print(xi_element)
+            xi_vector[num_of_cbf] = xi_element
+            LgV = lie_derivative(poly=V, vector_feild=self.g, variables=self.x, pow=1)
+            lambda_element = LgV
+            lambda_matrix[num_of_cbf] = lambda_element
+
+        # laoding the physical constraints:
+        if self.Au is not None:
+            lambda_matrix[-self.Au.shape[0] :] = self.Au
+            xi_vector[-self.Au.shape[0] :] = self.bu
+        
+        return (xi_vector, lambda_matrix)
+
+    def _add_compatibility(
+        self,
+        *,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        xi: np.ndarray,
+        lambda_mat: np.ndarray,
+        lagrangians: CompatibleLagrangians,
+        barrier_eps: Optional[np.ndarray],
+        kappa_h: Optional[List[List[float]]],
+        relative_degrees: list[int],
+        local_clf: bool,
+        check_mode: bool = False,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> sym.Polynomial:
+        """
+        Add the p-satz condition that certifies the following set is empty
+        if use_y_squared = False:
+        {(x, y) | [y(0)]ᵀ*[-∂h/∂x*g(x)] = [0], [y(0)]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1, y>=0, V(x)≤ρ, h(x)≥−ε}         (1)
+                  [y(1)]  [ ∂V/∂x*g(x)]   [0]  [y(1)]  [-∂V/∂x*f(x)-κ_V*V(x)]
+        if use_y_squared = True:
+        {(x, y) | [y(0)²]ᵀ*[-∂h/∂x*g(x)] = [0], [y(0)²]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1, V(x)≤ρ, h(x)≥−ε}              (2)
+                  [y(1)²]  [ ∂V/∂x*g(x)]   [0]  [y(1)²]  [-∂V/∂x*f(x)-κ_V*V(x)]
+        namely inside the set {x | V(x)≤ρ, h(x)≥−ε}, the CLF and CBF are compatible.
+
+        Let's denote
+        Λ(x) = [-∂h/∂x*g(x)]
+               [ ∂V/∂x*g(x)]
+        ξ(x) = [ ∂h/∂x*f(x)+κ_h*h(x)]
+               [-∂V/∂x*f(x)-κ_V*V(x)]
+        To certify the emptiness of the set in (1), we can use the sufficient condition
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy - s₁(x, y)(ξ(x)ᵀy+1) - s₂(x, y)ᵀy - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(h(x)+ε) is sos          (3)
+        s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
+
+        To certify the emptiness of the set in (2), we can use the sufficient condition
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(h(x)+ε) is sos                     (4)
+        s₃(x, y), s₄(x, y) are all sos.
+
+        Note that we do NOT add the constraint
+        s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
+        in this function. The user should add this constraint separately.
+
+        Returns:
+          poly: The polynomial on the left hand side of equation (3) or (4).
+        """  # noqa: E501
+        # This is just polynomial 1.
+        poly_one = sym.Polynomial(sym.Monomial())
+
+        poly = -poly_one
+        # Compute s₀(x, y)ᵀ Λ(x)ᵀy
+        if self.use_y_squared:
+            lambda_y = lambda_mat.T @ self.y_squared_poly
+        else:
+            lambda_y = lambda_mat.T @ self.y_poly
+        poly -= lagrangians.lambda_y.dot(lambda_y)
+
+        # Compute s₁(x, y)(ξ(x)ᵀy+1)
+        if self.use_y_squared:
+            xi_y = xi.dot(self.y_squared_poly) + poly_one
+        else:
+            xi_y = xi.dot(self.y_poly) + poly_one
+        poly -= lagrangians.xi_y * xi_y
+
+        # Compute s₂(x, y)ᵀy
+        if not self.use_y_squared:
+            assert lagrangians.y is not None
+            poly -= lagrangians.y.dot(self.y_poly)
+
+        # Compute s₃(x, y)(1 − V)
+        if self.with_clf and local_clf:
+            assert V is not None
+            assert lagrangians.rho_minus_V is not None
+            poly -= lagrangians.rho_minus_V * (poly_one - V)
+
+        # Compute s₄(x, y)ᵀ(h(x)+ε)
+        if barrier_eps is not None:
+            assert np.all(barrier_eps >= 0)
+            assert lagrangians.h_plus_eps is not None
+            poly -= lagrangians.h_plus_eps.dot(barrier_eps + h)
+        
+        # Compute lower liederivative terms multiply with the lagrangians:
+        if lagrangians.lower_lie_derivatives is not None:
+            for i in range(len(lagrangians.lower_lie_derivatives)):
+                lower_lie_derivative_polynomials = lower_lie_derivatives(
+                    poly=h[i], 
+                    vector_feild=self.f, 
+                    variables=self.x,
+                    relative_degree=relative_degrees[i],
+                    betas=kappa_h[i]
+                )
+                poly -= lagrangians.lower_lie_derivatives[i].dot(lower_lie_derivative_polynomials)
+
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        if check_mode:
+            return poly
+        prog.AddSosConstraint(poly, sos_type)
+        return poly
+
+    def _add_compatibility_w_vrep(
+        self,
+        *,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        xi: np.ndarray,
+        lambda_mat: np.ndarray,
+        lagrangians: CompatibleWVrepLagrangians,
+        barrier_eps: Optional[np.ndarray],
+        kappa_h: Optional[List[List[float]]],
+        relative_degrees: Optional[list[int]],
+        local_clf: bool,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    ) -> sym.Polynomial:
+        """
+        In order to prove that the polyhedron {u | Λ(x)u≤ ξ(x)} intersects with
+        u∈𝒰 = ConvexHull(u⁽¹⁾,...,u⁽ᵐ⁾) ⊕ ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾), we want
+        to prove that a separating plane between the two polyhedron doesn't
+        exist. This is the same as proving that the following set is empty
+        {y | y≥0, −ξ(x)ᵀy + yᵀΛ(x)u⁽ⁱ⁾−1≥0 , yᵀΛ(x)v⁽ʲ⁾≥0, −ξ(x)ᵀy-1≥0, i=1,..,m, j=1,...,n, V(x)≤1, h(x)≥ −ε}
+        Using S-procedure, a sufficient condition for this set being empty is
+        -1 - t₁(x,y)ᵀ(−ξᵀy + yᵀΛu−1) - t₂(x,y)ᵀyᵀΛ(x)v - t₃(x,y)(−ξ(x)ᵀy-1) - t₄(x,y)ᵀy - t₅(x,y)(1−V(x)) − t₆(x, y)(h(x)+ε) is sos.
+
+        If the convex cone ConvexCone(v⁽¹⁾, ..., v⁽ⁿ⁾) is empty, then we don't need the term - t₂(x,y)ᵀyᵀΛ(x)v-t₃(x,y)(−ξ(x)ᵀy-1).
+
+        Alternatively, we could use y² to replace y in the sos polynomial, and
+        remove the term t₄(x,y)ᵀy. Namely the following polynomial should be sos
+        -1 - t₁(x,y)ᵀ(−ξᵀy² + (y²)ᵀΛu−1) - t₂(x,y)ᵀ(y²)ᵀΛ(x)v - t₃(x,y)(−ξ(x)ᵀy²-1) - t₅(x,y)(1−V(x)) − t₆(x, y)(h(x)+ε) is sos.
+        """  # noqa E501
+        assert self.u_vertices is not None or self.u_extreme_rays is not None
+        # This is just polynomial 1.
+        poly_one = sym.Polynomial(sym.Monomial())
+
+        poly = -poly_one
+
+        y_or_y_squared = self.y_squared_poly if self.use_y_squared else self.y_poly
+
+        if self.u_vertices is not None:
+            assert lagrangians.u_vertices is not None
+            poly -= lagrangians.u_vertices.dot(
+                -xi.dot(y_or_y_squared)
+                + y_or_y_squared @ (lambda_mat @ self.u_vertices.T)
+                - poly_one
+            )
+
+        if self.u_extreme_rays is not None:
+            assert lagrangians.u_extreme_rays is not None
+            assert lagrangians.xi_y is not None
+            poly -= lagrangians.u_extreme_rays.dot(
+                y_or_y_squared @ (lambda_mat @ self.u_extreme_rays.T)
+            )
+            poly -= lagrangians.xi_y * (-xi.dot(y_or_y_squared) - poly_one)
+        else:
+            assert lagrangians.u_extreme_rays is None
+            assert lagrangians.xi_y is None
+
+        if not self.use_y_squared:
+            assert lagrangians.y is not None
+            poly -= lagrangians.y.dot(self.y_poly)
+
+        if self.with_clf and local_clf:
+            assert lagrangians.rho_minus_V is not None
+            assert V is not None
+            poly -= lagrangians.rho_minus_V * (poly_one - V)
+
+        poly -= lagrangians.h_plus_eps.dot(h + barrier_eps)
+
+        if lagrangians.lower_lie_derivatives is not None:
+            for i in range(len(lagrangians.lower_lie_derivatives)):
+                lower_lie_derivative_polynomials = lower_lie_derivatives(
+                    poly=h[i], 
+                    vector_feild=self.f, 
+                    variables=self.x,
+                    relative_degree=relative_degrees[i],
+                    betas=kappa_h[i]
+                )
+                poly -= lagrangians.lower_lie_derivatives[i].dot(lower_lie_derivative_polynomials)
+
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+
+        prog.AddSosConstraint(poly, sos_type)
+        return poly
+
+    def _add_continuity_constraint(
+        self,
+        prog: solvers.MathematicalProgram,
+        V: sym.Polynomial,
+        h: np.ndarray,
+        xi_vector: np.ndarray,
+        lambda_matrix: np.ndarray,
+        lagrangians: ContinuityLagrangians,
+        kappa_h: Optional[List[List[float]]],
+        relative_degrees: list[int],
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+    )-> sym.Polynomial:
+        poly = lagrangians.rho_minus_V * (1 - V)
+        poly += lagrangians.h.dot(h)
+        poly += -xi_vector.dot(self.y_squared_poly) * lagrangians.xi_y
+        lambda_y = lambda_matrix.T @ self.y_squared_poly
+        poly += lagrangians.lambda_y.dot(lambda_y)
+        poly += lagrangians.yT1_minus_1 * (np.ones_like(self.y_squared_poly).dot(self.y_squared_poly) - 1)
+        poly += (lagrangians.xTx + 1) * self.x.dot(self.x)
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly += lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        if lagrangians.lower_lie_derivatives is not None:
+            for i in range(len(lagrangians.lower_lie_derivatives)):
+                lower_lie_derivative_polynomials = lower_lie_derivatives(
+                    poly=h[i], 
+                    vector_feild=self.f, 
+                    variables=self.x,
+                    relative_degree=relative_degrees[i],
+                    betas=kappa_h[i]
+                )
+                poly += lagrangians.lower_lie_derivatives[i].dot(lower_lie_derivative_polynomials)
+
+        prog.AddSosConstraint(-poly, sos_type)
+        return poly
+
+    def _add_nominal_controller_compatibility(
+        self,
+        prog: solvers.MathematicalProgram,
+        V: sym.Polynomial,
+        h: np.ndarray,
+        xi_vector: np.ndarray,
+        lambda_matrix: np.ndarray,
+        epsilon: float,
+        lagrangians: NominalCompatibleLagrangians,
+        sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        local_clf: bool = True,
+        check_mode: bool = False
+    ) -> np.ndarray:
+        poly = np.array([])
+        # add CBF constraints:
+        num_cbf = len(h)
+        for i in range(num_cbf):
+            cbf_poly = -lagrangians.shared_sos * (-xi_vector[i])
+            cbf_poly -= lagrangians.h[i] * h[i]
+            cbf_poly -= lagrangians.shared_poly.dot(-lambda_matrix[i])
+            cbf_poly -= np.square(xi_vector[i])
+            cbf_poly -= lagrangians.second_order_cone_h[i]*(-xi_vector[i])*h[i]
+            if self.state_eq_constraints is not None:
+                assert lagrangians.state_eq_constraints is not None
+                cbf_poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+            poly = np.append(poly, cbf_poly)
+            prog.AddSosConstraint(cbf_poly, sos_type)
+        # add CLF constraints:
+        clf_poly = -lagrangians.shared_sos * (-xi_vector[num_cbf])
+        if local_clf:
+            clf_poly -= lagrangians.rho_minus_V * (1 - V)
+        clf_poly -= lagrangians.second_order_cone_V*(-xi_vector[num_cbf])*(1-V)
+        clf_poly -= lagrangians.shared_poly.dot(lambda_matrix[num_cbf])
+        clf_poly -= np.power(xi_vector[num_cbf], 2)
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            clf_poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        poly = np.append(poly, clf_poly)
+        if check_mode:
+            return poly
+        prog.AddSosConstraint(clf_poly, sos_type)
+        # add strict positive SOS constraint
+        prog.AddSosConstraint(lagrangians.shared_sos - epsilon, sos_type)
+
+        return poly
+
+    def _add_barrier_within_constraint(
+        self,
+        prog: solvers.MathematicalProgram,
+        within_index: int,
+        h: np.ndarray,
+        lagrangians: WithinRegionLagrangians,
+    ) -> sym.Polynomial:
+        """
+        Adds the constraint that the 0-super level set of the barrier function
+        is in the safe region {x | pᵢ(x) <= 0}.
+        −(1+ϕ₀(x))pᵢ(x) − ∑ᵢψᵢ(x)h(x) is sos.
+
+        Note it doesn't add the constraints
+        ϕ₀(x) is sos, ψᵢ(x) is sos.
+
+        Args:
+          within_index: pᵢ(x) = self.within_set.l[within_index]
+        """
+        assert self.within_set is not None
+        poly = -(1 + lagrangians.safe_region) * self.within_set.l[
+            within_index
+        ] - lagrangians.cbf.dot(h)
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        prog.AddSosConstraint(poly)
+        return poly
+
+    def _add_barrier_exclude_constraint(
+        self,
+        prog: solvers.MathematicalProgram,
+        exclude_set_index: int,
+        h: np.ndarray,
+        lagrangians: ExcludeRegionLagrangians,
+    ) -> sym.Polynomial:
+        """
+        Adds the constraint that the 0-superlevel set of the barrier function
+        does not intersect with the exclude region.
+        Since the i'th unsafe regions is defined as the 0-sublevel set of
+        polynomials p(x), we want to certify that the set {x|p(x)≤0, hᵢ(x)≥0, ∀i}
+        is empty.
+        The emptiness of the set can be certified by the constraint
+        -∑ᵢϕᵢ(x))*hᵢ(x) +∑ⱼψⱼ(x)pⱼ(x)-1 is sos
+        ϕᵢ(x), ψⱼ(x) are sos.
+
+        Note that this function only adds the constraint
+        -(1+ϕᵢ,₀(x))*hᵢ(x) +∑ⱼϕᵢ,ⱼ(x)pⱼ(x) is sos
+        It doesn't add the constraint ϕᵢ,₀(x), ϕᵢ,ⱼ(x) are sos.
+
+        Args:
+          exclude_set_index: We certify that the 0-superlevel set of the
+            barrier function doesn't intersect with the exclude region
+            self.exclude_sets[exclude_set_index].l
+          h: a polynomial, h is the barrier function for the
+            exclude region self.exclude_sets[exclude_set_index].
+          lagrangians: A array of polynomials, ϕᵢ(x) in the documentation above.
+        Returns:
+          poly: poly is the polynomial -∑ᵢϕᵢ(x))*hᵢ(x) +∑ⱼψⱼ(x)pⱼ(x)-1
+        """
+        assert lagrangians.unsafe_region.size == len(
+            self.exclude_sets[exclude_set_index].l
+        )
+        if self.num_cbf == 1:
+            poly = -(1 + lagrangians.cbf[0]) * h[0]
+        else:
+            poly = -1 - lagrangians.cbf.dot(h)
+        poly += lagrangians.unsafe_region.dot(self.exclude_sets[exclude_set_index].l)
+        if self.state_eq_constraints is not None:
+            assert lagrangians.state_eq_constraints is not None
+            poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
+        prog.AddSosConstraint(poly)
+        return poly
+
+    def _construct_search_clf_cbf_program(
+        self,
+        compatible_lagrangians: Union[
+            CompatibleLagrangians, CompatibleWVrepLagrangians
+        ],
+        compatible_lagrangian_degrees: Union[
+            CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
+        ],
+        safety_sets_lagrangians: SafetySetLagrangians,
+        safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
+        clf_degree: Optional[int],
+        cbf_degrees: List[int],
+        cbf_states: List[np.ndarray],
+        x_equilibrium: Optional[np.ndarray],
+        kappa_V: Optional[float],
+        kappa_h: List[List[float]],
+        relative_degrees: list[int],
+        barrier_eps: np.ndarray,
+        local_clf: bool = True,
+        compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
+        compatible_lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,  # noqa
+    ) -> Tuple[
+        solvers.MathematicalProgram,
+        Optional[sym.Polynomial],
+        np.ndarray,
+    ]:
+        """
+        Construct a program to search for compatible CLF/CBFs given the Lagrangians.
+        Notice that we have not imposed the cost to the program yet.
+
+        Args:
+          compatible_lagrangians: The Lagrangian polynomials. Result from
+            solving construct_search_compatible_lagrangians().
+          safety_sets_lagrangian: The Lagrangians certifying that the 0-super
+            level set of the CBF is in the safety set.
+          clf_degree: if not None, the total degree of CLF.
+          cbf_degrees: cbf_degrees[i] is the total degree of the i'th CBF.
+          x_equilibrium: if not None, the equilibrium state.
+        """
+        assert len(cbf_degrees) == self.num_cbf
+        assert len(cbf_states) == self.num_cbf
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(self.xy_set)
+
+        if clf_degree is not None:
+            assert x_equilibrium is not None
+            V = new_sos_polynomial(
+                prog, self.x_set, clf_degree, zero_at_origin=np.all(x_equilibrium == 0)
+            )[0]
+            if np.any(x_equilibrium != 0):
+                # Add the constraint V(x*) = 0
+                (
+                    V_x_equilibrium_coeff,
+                    V_x_equilibrium_var,
+                    V_x_equilibrium_constant,
+                ) = V.EvaluateWithAffineCoefficients(
+                    self.x, x_equilibrium.reshape((-1, 1))
+                )
+                prog.AddLinearEqualityConstraint(
+                    V_x_equilibrium_coeff.reshape((1, -1)),
+                    -V_x_equilibrium_constant[0],
+                    V_x_equilibrium_var,
+                )
+        else:
+            V = None
+
+        # Add CBF.
+        h = np.array(
+            [
+                prog.NewFreePolynomial(cbf_states[i], cbf_degrees[i])
+                for i in range(self.num_cbf)
+            ]
+        )
+        # We can search for the Lagrangians for the safety set as well, since
+        # the safety set is fixed.
+        cbf_lagrangian = safety_sets_lagrangians.get_cbf_lagrangians()
+        safety_sets_lagrangians_new = safety_sets_lagrangian_degrees.to_lagrangians(
+            prog, self.x_set, cbf_lagrangian
+        )
+        assert len(safety_sets_lagrangians_new.exclude) == len(self.exclude_sets)
+        for exclude_set_index in range(len(self.exclude_sets)):
+            self._add_barrier_exclude_constraint(
+                prog,
+                exclude_set_index,
+                h,
+                #safety_sets_lagrangians.exclude[exclude_set_index],
+                safety_sets_lagrangians_new.exclude[exclude_set_index],
+            )
+        if self.within_set is not None:
+            for j in range(self.within_set.l.size):
+                self._add_barrier_within_constraint(
+                    prog, 
+                    j, 
+                    h, 
+                    #safety_sets_lagrangians.within[j],
+                    safety_sets_lagrangians_new.within[j],
+                )
+
+        # We can search for some compatible Lagrangians as well, including the
+        # Lagrangians for y >= 0 and the state equality constraints, as y>= 0
+        # and the state equality constraints don't depend on V or h.
+        if isinstance(compatible_lagrangian_degrees, CompatibleLagrangianDegrees):
+            compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
+                prog,
+                self.x_set,
+                self.y_set,
+                sos_type=compatible_lagrangian_sos_type,
+                lambda_y_lagrangian=compatible_lagrangians.lambda_y,
+                xi_y_lagrangian=compatible_lagrangians.xi_y,
+                rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
+                h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
+                lower_lie_derivatives_lagrangian=compatible_lagrangians.lower_lie_derivatives,
+            )
+        elif isinstance(
+            compatible_lagrangian_degrees, CompatibleWVrepLagrangianDegrees
+        ):
+            compatible_lagrangians_new = compatible_lagrangian_degrees.to_lagrangians(
+                prog,
+                self.x_set,
+                self.y_set,
+                sos_type=compatible_lagrangian_sos_type,
+                u_vertices_lagrangian=compatible_lagrangians.u_vertices,
+                u_extreme_rays_lagrangian=compatible_lagrangians.u_extreme_rays,
+                xi_y_lagrangian=compatible_lagrangians.xi_y,
+                rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
+                h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
+                lower_lie_derivatives_lagrangian=compatible_lagrangians.lower_lie_derivatives,
+            )
+
+        xi, lambda_mat = self._calc_xi_Lambda(
+            V=V, 
+            h=h, 
+            kappa_V=kappa_V, 
+            kappa_h=kappa_h, 
+            relative_degrees=relative_degrees
+        )
+
+        if self.u_vertices is not None or self.u_extreme_rays is not None:
+            assert isinstance(compatible_lagrangians_new, CompatibleWVrepLagrangians)
+            self._add_compatibility_w_vrep(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=compatible_lagrangians_new,
+                barrier_eps=barrier_eps,
+                kappa_h=kappa_h,
+                relative_degrees=relative_degrees,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
+        else:
+            assert isinstance(compatible_lagrangians_new, CompatibleLagrangians)
+            self._add_compatibility(
+                prog=prog,
+                V=V,
+                h=h,
+                xi=xi,
+                lambda_mat=lambda_mat,
+                lagrangians=compatible_lagrangians_new,
+                barrier_eps=barrier_eps,
+                kappa_h=kappa_h,
+                relative_degrees=relative_degrees,
+                local_clf=local_clf,
+                sos_type=compatible_sos_type,
+            )
+
+        return (prog, V, h)
+
+    def _find_max_inner_ellipsoid(
+        self,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        V_contain_lagrangian_degree: Optional[ContainmentLagrangianDegree],
+        h_contain_lagrangian_degree: List[ContainmentLagrangianDegree],
+        x_inner_init: np.ndarray,
+        max_iter: int = 10,
+        convergence_tol: float = 1e-3,
+        solver_id: Optional[solvers.SolverId] = None,
+        solver_options: Optional[solvers.SolverOptions] = None,
+        trust_region: Optional[float] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
+        """
+        Args:
+          x_inner_init: The initial guess on a point inside V(x) <= 1 and
+            h(x) >= 0. The initial ellipsoid will cover this point.
+        """
+        prog = solvers.MathematicalProgram()
+        dim = self.x_set.size()
+
+        S_ellipsoid = prog.NewSymmetricContinuousVariables(dim, "S")
+        prog.AddPositiveSemidefiniteConstraint(S_ellipsoid)
+        b_ellipsoid = prog.NewContinuousVariables(dim, "b")
+        c_ellipsoid = prog.NewContinuousVariables(1, "c")[0]
+
+        ellipsoid = sym.Polynomial(
+            self.x.dot(S_ellipsoid @ self.x) + b_ellipsoid.dot(self.x) + c_ellipsoid,
+            self.x_set,
+        )
+        prog.AddIndeterminates(self.x_set)
+        if V_contain_lagrangian_degree is not None:
+            V_contain_lagrangian = V_contain_lagrangian_degree.construct_lagrangian(
+                prog, self.x_set
+            )
+            assert V is not None
+            V_contain_lagrangian.add_constraint(
+                prog,
+                inner_ineq_poly=np.array([ellipsoid]),
+                inner_eq_poly=self.state_eq_constraints,
+                outer_poly=V - 1,
+            )
+        h_contain_lagrangians = [
+            degree.construct_lagrangian(prog, self.x_set)
+            for degree in h_contain_lagrangian_degree
+        ]
+
+        for i in range(len(h_contain_lagrangians)):
+            h_contain_lagrangians[i].add_constraint(
+                prog,
+                inner_ineq_poly=np.array([ellipsoid]),
+                inner_eq_poly=self.state_eq_constraints,
+                outer_poly=-h[i],
+            )
+
+        # Make sure x_inner_init is inside V(x) <= 1 and h(x) >= 0.
+        env_inner_init = {self.x[i]: x_inner_init[i] for i in range(self.nx)}
+        if V is not None:
+            assert V.Evaluate(env_inner_init) <= 1
+        for h_i in h:
+            assert h_i.Evaluate(env_inner_init) >= 0
+
+        # First solve an optimization problem to find an inner ellipsoid.
+        # Add a constraint that the initial ellipsoid contains x_inner_init.
+        x_inner_init_in_ellipsoid = (
+            ellipsoid_utils.add_ellipsoid_contain_pts_constraint(
+                prog,
+                S_ellipsoid,
+                b_ellipsoid,
+                c_ellipsoid,
+                x_inner_init.reshape((1, -1)),
+            )
+        )
+        result_init = solve_with_id(prog, solver_id, None)
+        assert result_init.is_success()
+        S_ellipsoid_init = result_init.GetSolution(S_ellipsoid)
+        b_ellipsoid_init = result_init.GetSolution(b_ellipsoid)
+        c_ellipsoid_init = result_init.GetSolution(c_ellipsoid)
+        prog.RemoveConstraint(x_inner_init_in_ellipsoid)
+
+        S_sol, b_sol, c_sol = ellipsoid_utils.maximize_inner_ellipsoid_sequentially(
+            prog,
+            S_ellipsoid,
+            b_ellipsoid,
+            c_ellipsoid,
+            S_ellipsoid_init,
+            b_ellipsoid_init,
+            c_ellipsoid_init,
+            max_iter,
+            convergence_tol,
+            solver_id,
+            solver_options,
+            trust_region,
+        )
+        return (S_sol, b_sol, c_sol)
+
+    def _add_ellipsoid_in_compatible_region_constraint(
+        self,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        S_ellipsoid_inner: np.ndarray,
+        b_ellipsoid_inner: np.ndarray,
+        c_ellipsoid_inner: float,
+    ):
+        """
+        Add the constraint that the ellipsoid is contained within the
+        compatible region {x | V(x) <= 1, h(x) >= 0}.
+        """
+        ellipsoid_poly = sym.Polynomial(
+            self.x.dot(S_ellipsoid_inner @ self.x)
+            + b_ellipsoid_inner.dot(self.x)
+            + c_ellipsoid_inner,
+            self.x_set,
+        )
+        if V is not None:
+            V_degree = V.TotalDegree()
+            inner_eq_lagrangian_degree = (
+                []
+                if self.state_eq_constraints is None
+                else [
+                    V_degree - poly.TotalDegree() for poly in self.state_eq_constraints
+                ]
+            )
+            ellipsoid_in_V_lagrangian_degree = ContainmentLagrangianDegree(
+                inner_ineq=[V_degree - 2], inner_eq=inner_eq_lagrangian_degree, outer=-1
+            )
+            ellipsoid_in_V_lagrangian = (
+                ellipsoid_in_V_lagrangian_degree.construct_lagrangian(prog, self.x_set)
+            )
+            ellipsoid_in_V_lagrangian.add_constraint(
+                prog,
+                inner_ineq_poly=np.array([ellipsoid_poly]),
+                inner_eq_poly=self.state_eq_constraints,
+                outer_poly=V - sym.Polynomial({sym.Monomial(): sym.Expression(1)}),
+            )
+        for i in range(h.size):
+            h_degree = h[i].TotalDegree()
+            inner_eq_lagrangian_degree = (
+                []
+                if self.state_eq_constraints is None
+                else [
+                    h_degree - poly.TotalDegree() for poly in self.state_eq_constraints
+                ]
+            )
+            ellipsoid_in_h_lagrangian_degree = ContainmentLagrangianDegree(
+                inner_ineq=[h_degree - 2], inner_eq=inner_eq_lagrangian_degree, outer=-1
+            )
+            ellipsoid_in_h_lagrangian = (
+                ellipsoid_in_h_lagrangian_degree.construct_lagrangian(prog, self.x_set)
+            )
+            ellipsoid_in_h_lagrangian.add_constraint(
+                prog,
+                inner_ineq_poly=np.array([ellipsoid_poly]),
+                inner_eq_poly=self.state_eq_constraints,
+                outer_poly=-h[i],
+            )
+
+    def _add_compatible_states_options(
+        self,
+        prog: solvers.MathematicalProgram,
+        V: Optional[sym.Polynomial],
+        h: np.ndarray,
+        compatible_states_options: CompatibleStatesOptions
+    ):
+        compatible_states_options.add_cost(prog, self.x, V, h, self.f, self.x)
+        compatible_states_options.add_constraint(prog, self.x, h)
+
+    def _get_V_contain_ellipsoid_lagrangian_degree(
+        self, V: Optional[sym.Polynomial]
+    ) -> Optional[ContainmentLagrangianDegree]:
+        if V is None:
+            return None
+        else:
+            return ContainmentLagrangianDegree(
+                inner_ineq=[-1],
+                inner_eq=(
+                    []
+                    if self.state_eq_constraints is None
+                    else [
+                        np.maximum(0, V.TotalDegree() - poly.TotalDegree())
+                        for poly in self.state_eq_constraints
+                    ]
+                ),
+                outer=0,
+            )
+
+    def _get_h_contain_ellipsoid_lagrangian_degrees(
+        self, h: np.ndarray
+    ) -> List[ContainmentLagrangianDegree]:
+        return [
+            ContainmentLagrangianDegree(
+                inner_ineq=[-1],
+                inner_eq=(
+                    []
+                    if self.state_eq_constraints is None
+                    else [
+                        np.maximum(0, h_i.TotalDegree() - poly.TotalDegree())
+                        for poly in self.state_eq_constraints
+                    ]
+                ),
+                outer=0,
+            )
+            for h_i in h
+        ]
+
+
+def save_clf_cbf(
+    V: Optional[sym.Polynomial],
+    h: np.ndarray,
+    x_set: sym.Variables,
+    kappa_V: Optional[float],
+    kappa_h: List[List[float]],
+    relative_degrees: Optional[list[int]],
+    pickle_path: str,
+):
+    """
+    Save the CLF and CBF to a pickle file.
+    """
+    _, file_extension = os.path.splitext(pickle_path)
+    assert file_extension in (".pkl", ".pickle"), f"File extension is {file_extension}"
+    data = {}
+    if V is not None:
+        data["V"] = compatible_clf_cbf.utils.serialize_polynomial(V, x_set)
+    data["h"] = [compatible_clf_cbf.utils.serialize_polynomial(h_i, x_set) for h_i in h]
+    if kappa_V is not None:
+        data["kappa_V"] = kappa_V
+    data["kappa_h"] = kappa_h
+    if relative_degrees is not None:
+        data["relative_degrees"] = relative_degrees
+
+    if os.path.exists(pickle_path):
+        overwrite_cmd = input(
+            f"File {pickle_path} already exists. Overwrite the file? Press [Y/n]:"
+        )
+        if overwrite_cmd in ("Y", "y"):
+            save_cmd = True
+        else:
+            save_cmd = False
+    else:
+        save_cmd = True
+
+    if save_cmd:
+        with open(pickle_path, "wb") as handle:
+            pickle.dump(data, handle)
+
+
+def load_clf_cbf(pickle_path: str, x_set: sym.Variables) -> dict:
+    ret = {}
+    with open(pickle_path, "rb") as handle:
+        data = pickle.load(handle)
+
+    if "V" in data.keys():
+        ret["V"] = compatible_clf_cbf.utils.deserialize_polynomial(data["V"], x_set)
+    ret["h"] = np.array(
+        [
+            compatible_clf_cbf.utils.deserialize_polynomial(h_i, x_set)
+            for h_i in data["h"]
+        ]
+    )
+    if "kappa_V" in data.keys():
+        ret["kappa_V"] = data["kappa_V"]
+    ret["kappa_h"] = data["kappa_h"]
+    if "relative_degrees" in data.keys():
+        ret["relative_degrees"] = data["relative_degrees"]
+    return ret
