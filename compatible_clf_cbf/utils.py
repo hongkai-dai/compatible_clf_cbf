@@ -65,13 +65,18 @@ def lower_lie_derivatives(
     """
     Assume relative degree = n, an HOCBF is valid if and only if:
     ∀ x ∈ {x|b(x)≥0, Lfb(x)+β1b(x)≥0, Lf^2b(x)+(β2+β1)Lfb(x)+β1β2b(x)≥0, ...,}
-    ∃ u ∈ U such that Lf^(n-1)Lgb(x)u + Lf^nb(x)+(βn+βn-1+...+β2+β1)Lf^(n-1)b(x)+...+β1β2b(x)≥0,
+    ∃ u ∈ U such that:
+        Lf^(n-1)Lgb(x)u+
+        Lf^nb(x)+(βn+βn-1+...+β2+β1)Lf^(n-1)b(x)+
+        ...
+        +β1β2b(x)≥0,
     this function computes an array of polynomials:
-    Lfb(x)+β1b(x)
-    Lf^2b(x)+(β2+β1)Lfb(x)+β1β2b(x)
-    ...
-    In our jornal extension, we give the definition of HOCBFs by using a Phi(x) vector,
-    this function computes the elements Phi_1(x), Phi_2(x), ..., Phi_(n-1)(x) (without Phi_0(x))
+        Lfb(x)+β1b(x)
+        Lf^2b(x)+(β2+β1)Lfb(x)+β1β2b(x)
+        ...
+    In our journal extension, we give the definition of HOCBFs by using a Phi(x) vector,
+    this function computes the elements:
+      Phi_1(x), Phi_2(x), ..., Phi_(n-1)(x) (without Phi_0(x))
     in that vector, where n is the relative degree.
     """
 

@@ -9,8 +9,10 @@ import pydrake.solvers as solvers
 
 def test_elementary_symmetric_polynomials():
     """
-    During the project, we only pass list of float numbers to the function elementary_symmetric_polynomials().
-    But in order to test the function, we pass list of symbolic variables to the function, and check whether the output
+    During the project, we only pass list of float numbers to the function:
+      elementary_symmetric_polynomials().
+    But in order to test the function, we pass list of symbolic variables to
+    this function, and check whether the output
     expresstion is correct.
     """
     a = sym.Variable("a")
