@@ -7,6 +7,69 @@ import pydrake.symbolic as sym
 import pydrake.solvers as solvers
 
 
+def test_elementary_symmetric_polynomials():
+    """
+    During the project, we only pass list of float numbers to the function:
+      elementary_symmetric_polynomials().
+    But in order to test the function, we pass list of symbolic variables to
+    this function, and check whether the output
+    expresstion is correct.
+    """
+    a = sym.Variable("a")
+    b = sym.Variable("b")
+    c = sym.Variable("c")
+    input1 = []
+    input2 = [a, b, c]
+    output1 = mut.elementary_symmetric_polynomials(input1)
+    output2 = mut.elementary_symmetric_polynomials(input2)
+    expected_output1 = 1
+    expected_output2 = np.array([1, a + b + c, a * b + a * c + b * c, a * b * c])
+    assert output1 == expected_output1
+    assert output2[0] == expected_output2[0]
+    for i in range(1, output2.size):
+        assert output2[i].EqualTo(expected_output2[i])
+
+
+def test_lie_derivative():
+    x = sym.MakeVectorContinuousVariable(2, "x")
+    b1 = sym.Polynomial(x[0] + x[1])
+    b2 = sym.Polynomial(x[0] * x[1])
+    b3 = b2
+    pow1 = 0
+    pow2 = 1
+    pow3 = 2
+    f = np.array([sym.Polynomial(x[0] ** 2), sym.Polynomial(x[1] ** 2)])
+    expected_output1 = b1
+    expected_output2 = sym.Polynomial(x[1] * x[0] ** 2 + x[0] * x[1] ** 2)
+    expected_output3 = sym.Polynomial(
+        2 * x[1] * x[0] ** 3 + 2 * x[0] ** 2 * x[1] ** 2 + 2 * x[0] * x[1] ** 3
+    )
+    output1 = mut.lie_derivative(poly=b1, vector_feild=f, variables=x, pow=pow1)
+    output2 = mut.lie_derivative(poly=b2, vector_feild=f, variables=x, pow=pow2)
+    output3 = mut.lie_derivative(poly=b3, vector_feild=f, variables=x, pow=pow3)
+    assert output1.EqualTo(expected_output1)
+    assert output2.EqualTo(expected_output2)
+    assert output3.EqualTo(expected_output3)
+
+
+def test_lower_lie_drivatives():
+    x = sym.MakeVectorContinuousVariable(2, "x")
+    b = sym.Polynomial(x[0] + 1)
+    f = np.array([sym.Polynomial(x[1]), sym.Polynomial()])
+    r = 2
+    betas = [1.0, 1.0]
+    expected_ouput = np.array([sym.Polynomial(x[0] + x[1] + 1)])
+    output = mut.lower_lie_derivatives(
+        poly=b,
+        vector_feild=f,
+        variables=x,
+        relative_degree=r,
+        betas=betas,
+    )
+    assert output.size == 1
+    assert output[0].EqualTo(expected_ouput[0])
+
+
 def test_check_array_of_polynomials():
     x = sym.MakeVectorContinuousVariable(rows=3, name="x")
     x_set = sym.Variables(x)
