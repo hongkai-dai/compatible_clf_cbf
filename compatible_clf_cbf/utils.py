@@ -13,33 +13,28 @@ def elementary_symmetric_polynomials(input: Optional[list]) -> np.ndarray:
     given a set of numbers, compute the symetric polynomials:
     for example, given [a,b,c]
     the output should be [1, a+b+c, ab+bc+ac, abc]
-    this function is used for computing high relative degree weights  
+    this function is used for computing high relative degree weights
     for different power of Lie derivatives.
     """
     output = [1.0]
     if input is not None:
         N = len(input)
-        for i in range(1, N+1):
+        for i in range(1, N + 1):
             product_terms = []
             for comb in itertools.combinations(input, i):
-                product = 1
-                for x in comb:
-                    product *= x
-                product_terms.append(product)
+                product_terms.append(np.prod(comb))
             sum_of_products = sum(product_terms)
             output.append(sum_of_products)
     return np.array(output)
 
 
 def lie_derivative(
-        poly: sym.Polynomial, 
-        vector_feild: np.ndarray,
-        variables: np.ndarray, 
-        pow: int) -> sym.Polynomial:
+    poly: sym.Polynomial, vector_feild: np.ndarray, variables: np.ndarray, pow: int
+) -> sym.Polynomial:
     """
-    compute the n-power lie derivative of a polynomial with respect to the 
-    vector feild f. The output should be Lf^nb(x), where the b(x) is the 
-    input polynomial, and f(x), the vector feild, is an array of polynomials. 
+    compute the n-power lie derivative of a polynomial with respect to the
+    vector feild f. The output should be Lf^nb(x), where the b(x) is the
+    input polynomial, and f(x), the vector feild, is an array of polynomials.
     Both f(x) and b(x) are based on x variables.
 
     Args:
@@ -53,19 +48,20 @@ def lie_derivative(
     if pow == 0:
         return temp_x
     elif pow >= 1:
-        for i in range(1, pow+1):
+        for i in range(1, pow + 1):
             temp_x = np.dot(temp_x.Jacobian(variables), vector_feild)
         return temp_x
     else:
-        assert pow>=0, "power of lie derivative should not be negative"
+        assert pow >= 0, "power of lie derivative should not be negative"
 
 
 def lower_lie_derivatives(
-        poly: sym.Polynomial, 
-        vector_feild: np.ndarray,
-        variables: np.ndarray, 
-        relative_degree: int,
-        betas:list[float]) -> np.ndarray:
+    poly: sym.Polynomial,
+    vector_feild: np.ndarray,
+    variables: np.ndarray,
+    relative_degree: int,
+    betas: list[float],
+) -> np.ndarray:
     """
     Assume relative degree = n, an HOCBF is valid if and only if:
     ∀ x ∈ {x|b(x)≥0, Lfb(x)+β1b(x)≥0, Lf^2b(x)+(β2+β1)Lfb(x)+β1β2b(x)≥0, ...,}
@@ -74,25 +70,25 @@ def lower_lie_derivatives(
     Lfb(x)+β1b(x)
     Lf^2b(x)+(β2+β1)Lfb(x)+β1β2b(x)
     ...
-    In our jornal extension, we give the definition of HOCBFs by using a Phi(x) vector, 
+    In our jornal extension, we give the definition of HOCBFs by using a Phi(x) vector,
     this function computes the elements Phi_1(x), Phi_2(x), ..., Phi_(n-1)(x) (without Phi_0(x))
     in that vector, where n is the relative degree.
     """
-    
-    output = np.empty(relative_degree-1, dtype=object)
+
+    output = np.empty(relative_degree - 1, dtype=object)
     # the range is from 1 to relative_degree, with relative_degree excluded.
     # hence if the relative_degree is 1, the output should be an empty array.
     for i in range(1, relative_degree):
         beta_vector = elementary_symmetric_polynomials(betas[:i])
-        lie_derivatives = np.array([
-            lie_derivative(
-                poly=poly, 
-                vector_feild=vector_feild, 
-                variables=variables,
-                pow=j) 
-            for j in range(i, -1, -1)
-            ])
-        output[i-1]=np.dot(beta_vector, lie_derivatives)
+        lie_derivatives = np.array(
+            [
+                lie_derivative(
+                    poly=poly, vector_feild=vector_feild, variables=variables, pow=j
+                )
+                for j in range(i, -1, -1)
+            ]
+        )
+        output[i - 1] = np.dot(beta_vector, lie_derivatives)
     return output
 
 

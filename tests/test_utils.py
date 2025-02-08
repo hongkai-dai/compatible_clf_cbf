@@ -11,7 +11,7 @@ def test_elementary_symmetric_polynomials():
     """
     During the project, we only pass list of float numbers to the function elementary_symmetric_polynomials().
     But in order to test the function, we pass list of symbolic variables to the function, and check whether the output
-    expresstion is correct. 
+    expresstion is correct.
     """
     a = sym.Variable("a")
     b = sym.Variable("b")
@@ -38,8 +38,10 @@ def test_lie_derivative():
     pow3 = 2
     f = np.array([sym.Polynomial(x[0] ** 2), sym.Polynomial(x[1] ** 2)])
     expected_output1 = b1
-    expected_output2 = sym.Polynomial(x[1] * x[0]**2 + x[0] * x[1]**2)
-    expected_output3 = sym.Polynomial(2*x[1]*x[0]**3 + 2*x[0]**2*x[1]**2 + 2*x[0]*x[1]**3)
+    expected_output2 = sym.Polynomial(x[1] * x[0] ** 2 + x[0] * x[1] ** 2)
+    expected_output3 = sym.Polynomial(
+        2 * x[1] * x[0] ** 3 + 2 * x[0] ** 2 * x[1] ** 2 + 2 * x[0] * x[1] ** 3
+    )
     output1 = mut.lie_derivative(poly=b1, vector_feild=f, variables=x, pow=pow1)
     output2 = mut.lie_derivative(poly=b2, vector_feild=f, variables=x, pow=pow2)
     output3 = mut.lie_derivative(poly=b3, vector_feild=f, variables=x, pow=pow3)
