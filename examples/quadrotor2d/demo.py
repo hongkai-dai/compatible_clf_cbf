@@ -38,7 +38,18 @@ def main(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
         u_vertices, u_extreme_rays = None, None
 
     # Ground as the unsafe region.
-    exclude_sets = [clf_cbf.ExcludeSet(np.array([sym.Polynomial(x[1] + 2)]))]
+    exclude_sets = [
+        clf_cbf.ExcludeSet(
+            np.array(
+                [
+                    sym.Polynomial(x[1] + 2),
+                    sym.Polynomial(2 - x[1]),
+                    sym.Polynomial(x[0] + 2),
+                    sym.Polynomial(2 - x[0]),
+                ]
+            )
+        )
+    ]
     state_eq_constraints = quadrotor.equality_constraint(x)
     compatible = clf_cbf.CompatibleClfCbf(
         f=f,
@@ -106,7 +117,7 @@ def main(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
         exclude=[
             clf_cbf.ExcludeRegionLagrangianDegrees(
-                cbf=[0], unsafe_region=[0], state_eq_constraints=[0]
+                cbf=[0], unsafe_region=[0, 0, 0, 0], state_eq_constraints=[0]
             )
         ],
         within=[],
@@ -117,11 +128,13 @@ def main(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
     compatible_states_options = clf_cbf.CompatibleStatesOptions(
         candidate_compatible_states=np.array(
             [
-                [-3, 0, 0, 0, 0, 0, 0],
-                [3, 0, 0, 0, 0, 0, 0],
-                [-1.5, -0.5, 0, 0, 0, 0, 0],
-                [1.5, 0.5, 0, 0, 0, 0, 0],
-                [0, -1.5, 0, 0, 0, 0, 0],
+                [-1.8, 0, 0, 0, 0, 0, 0],
+                [1.8, 0, 0, 0, 0, 0, 0],
+                [-1.8, -0.5, 0, 0, 0, 0, 0],
+                [1.8, 0.5, 0, 0, 0, 0, 0],
+                [0, -1.5, np.sin(0.3 * np.pi), np.cos(0.3 * np.pi) - 1, 0, 0, 0],
+                [0, -1.5, np.sin(-0.3 * np.pi), np.cos(-0.3 * np.pi) - 1, 0, 0, 0],
+                [0, 1.5, np.sin(0.2 * np.pi), np.cos(0.2 * np.pi) - 1, 0, 0, 0],
             ]
         ),
         anchor_states=np.zeros((1, 7)),
@@ -173,6 +186,6 @@ def main(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
 
 
 if __name__ == "__main__":
-    # main(use_y_squared=False, with_u_bound=False, use_v_rep=False)
-    main(use_y_squared=True, with_u_bound=True, use_v_rep=False)
+    main(use_y_squared=True, with_u_bound=False, use_v_rep=False)
+    # main(use_y_squared=True, with_u_bound=True, use_v_rep=False)
     # main(use_y_squared=True, with_u_bound=True, use_v_rep=True)
