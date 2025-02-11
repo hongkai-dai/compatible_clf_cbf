@@ -49,3 +49,7 @@ jobs:
         run: |
           source venv/bin/activate
           python examples/nonlinear_toy/demo_trigpoly.py --unit_test
+      - name: run small_control/demo
+        run: |
+          source venv/bin/activate
+          python examples/small_control/demo.py

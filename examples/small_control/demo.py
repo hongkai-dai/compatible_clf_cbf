@@ -67,6 +67,7 @@ def main():
     compatible_lagrangians_result = compatible_lagrangians.get_result(
         compatible_result, coefficient_tol=1e-10
     )
+    assert compatible_result.is_success()
     print(f"xi_y lagrangians\n{compatible_lagrangians_result.xi_y}")
     print(f"lambda_y lagrangians\n{compatible_lagrangians_result.lambda_y}")
 
