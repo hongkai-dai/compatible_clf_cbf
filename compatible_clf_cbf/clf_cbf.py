@@ -34,6 +34,105 @@ import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
 
 
 @dataclass
+class CompatibleLagrangians:
+    """
+    The Lagrangians for proving the compatibility condition, namely set (1) or (2)
+    defined in CompatibleClfCbf class documentation is empty.
+    """
+
+    # An array of symbolic polynomials. The Lagrangian multiplies with Λ(x)ᵀy if
+    # use_y_squared = False, or Λ(x)ᵀy² if use_y_squared = True.
+    # Each entry in this Lagrangian multiplier is a free polynomial.
+    # Size is (nu,)
+    lambda_y: np.ndarray
+    # The Lagrangian polynomial multiplies with ξ(x)ᵀy if use_y_squared = False,
+    # or ξ(x)ᵀy² if use_y_squared = True. This multiplier is a free polynomial.
+    xi_y: sym.Polynomial
+    # The Lagrangian polynomial multiplies with y if use_y_squared = False.
+    # This multiplier is an array of SOS polynomials.
+    y: Optional[np.ndarray]
+    # The Lagrangian polynomial multiplies with cross terms of y
+    # (namely y[i]*y[j]) if use_y_squared = False. This multiplier is an array
+    # of SOS poynomials.
+    y_cross: Optional[np.ndarray]
+    # The Lagrangian polynomial multiplies with ρ − V when with_clf = True, and
+    # we search for an CLF with a region-of-attraction {x | V(x) <= ρ}.
+    # Should be a SOS polynomial.
+    rho_minus_V: Optional[sym.Polynomial]
+    # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
+    # polynomials.
+    h_plus_eps: np.ndarray
+    # The lagragian polynomials that are multiplying with lower power of
+    # lie derivatives of h(x) when we are using HOCBFs.
+    # The outter list size is equal to the number of CBFs,
+    # the inner array size is equal to the corresponding HOCBF's relative degree-1.
+    # In journal paper, we use Phi(x) vector (equation (4a-b) in our journal paper)
+    # to denote the lie derivatives of h(x). Since Phi^(0)(x) = h(x) and Phi^(r)(x)
+    # is integrated into Lambda matrix and Xi vector, then each array in the
+    # item "lower_lie_derivatives" only contains Phi^(1)(x) to Phi^(r-1)(x).
+    # Also, we may have multiple HOCBFs, hence "lower_lie_derivatives" is a list of
+    # such kind of arrays.
+    lower_lie_derivatives: Optional[List[np.ndarray]] = None
+    # The free Lagrangian polynomials multiplying the state equality
+    # constraints.
+    state_eq_constraints: Optional[np.ndarray] = None
+
+    def get_result(
+        self,
+        result: solvers.MathematicalProgramResult,
+        coefficient_tol: Optional[float],
+    ) -> Self:
+        """
+        Gets the result of the Lagrangians.
+        """
+        lambda_y_result = get_polynomial_result(result, self.lambda_y, coefficient_tol)
+        xi_y_result = get_polynomial_result(result, self.xi_y, coefficient_tol)
+        y_result = (
+            get_polynomial_result(result, self.y, coefficient_tol)
+            if self.y is not None
+            else None
+        )
+        y_cross_result = (
+            get_polynomial_result(result, self.y_cross, coefficient_tol)
+            if self.y_cross is not None
+            else None
+        )
+        rho_minus_V_result = (
+            get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
+            if self.rho_minus_V is not None
+            else None
+        )
+        h_plus_eps_result = get_polynomial_result(
+            result, self.h_plus_eps, coefficient_tol
+        )
+        lower_lie_derivatives_result = (
+            [
+                get_polynomial_result(
+                    result, self.lower_lie_derivatives[i], coefficient_tol
+                )
+                for i in range(len(self.lower_lie_derivatives))
+            ]
+            if self.lower_lie_derivatives is not None
+            else None
+        )
+        state_eq_constraints_result = (
+            get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
+            if self.state_eq_constraints is not None
+            else None
+        )
+        return CompatibleLagrangians(
+            lambda_y=lambda_y_result,
+            xi_y=xi_y_result,
+            y=y_result,
+            y_cross=y_cross_result,
+            rho_minus_V=rho_minus_V_result,
+            h_plus_eps=h_plus_eps_result,
+            lower_lie_derivatives=lower_lie_derivatives_result,
+            state_eq_constraints=state_eq_constraints_result,
+        )
+
+
+@dataclass
 class XYDegree:
     """
     The degree of each Lagrangian polynomial in indeterminates x and y. For
@@ -128,95 +227,6 @@ def _to_lagrangian_impl(
 
 
 @dataclass
-class CompatibleLagrangians:
-    """
-    The Lagrangians for proving the compatibility condition, namely set (1) or (2)
-    defined in CompatibleClfCbf class documentation is empty.
-    """
-
-    # An array of symbolic polynomials. The Lagrangian multiplies with Λ(x)ᵀy if
-    # use_y_squared = False, or Λ(x)ᵀy² if use_y_squared = True.
-    # Each entry in this Lagrangian multiplier is a free polynomial.
-    # Size is (nu,)
-    lambda_y: np.ndarray
-    # The Lagrangian polynomial multiplies with ξ(x)ᵀy if use_y_squared = False,
-    # or ξ(x)ᵀy² if use_y_squared = True. This multiplier is a free polynomial.
-    xi_y: sym.Polynomial
-    # The Lagrangian polynomial multiplies with y if use_y_squared = False.
-    # This multiplier is an array of SOS polynomials.
-    y: Optional[np.ndarray]
-    # The Lagrangian polynomial multiplies with ρ − V when with_clf = True, and
-    # we search for an CLF with a region-of-attraction {x | V(x) <= ρ}.
-    # Should be a SOS polynomial.
-    rho_minus_V: Optional[sym.Polynomial]
-    # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
-    # polynomials.
-    h_plus_eps: np.ndarray
-    # The lagragian polynomials that are multiplying with lower power of
-    # lie derivatives of h(x) when we are using HOCBFs.
-    # The outter list size is equal to the number of CBFs,
-    # the inner array size is equal to the corresponding HOCBF's relative degree-1.
-    # In journal paper, we use Phi(x) vector (equation (4a-b) in our journal paper)
-    # to denote the lie derivatives of h(x). Since Phi^(0)(x) = h(x) and Phi^(r)(x)
-    # is integrated into Lambda matrix and Xi vector, then each array in the
-    # item "lower_lie_derivatives" only contains Phi^(1)(x) to Phi^(r-1)(x).
-    # Also, we may have multiple HOCBFs, hence "lower_lie_derivatives" is a list of
-    # such kind of arrays.
-    lower_lie_derivatives: Optional[List[np.ndarray]]
-    # The free Lagrangian polynomials multiplying the state equality
-    # constraints.
-    state_eq_constraints: Optional[np.ndarray]
-
-    def get_result(
-        self,
-        result: solvers.MathematicalProgramResult,
-        coefficient_tol: Optional[float],
-    ) -> Self:
-        """
-        Gets the result of the Lagrangians.
-        """
-        lambda_y_result = get_polynomial_result(result, self.lambda_y, coefficient_tol)
-        xi_y_result = get_polynomial_result(result, self.xi_y, coefficient_tol)
-        y_result = (
-            get_polynomial_result(result, self.y, coefficient_tol)
-            if self.y is not None
-            else None
-        )
-        rho_minus_V_result = (
-            get_polynomial_result(result, self.rho_minus_V, coefficient_tol)
-            if self.rho_minus_V is not None
-            else None
-        )
-        h_plus_eps_result = get_polynomial_result(
-            result, self.h_plus_eps, coefficient_tol
-        )
-        lower_lie_derivatives_result = (
-            [
-                get_polynomial_result(
-                    result, self.lower_lie_derivatives[i], coefficient_tol
-                )
-                for i in range(len(self.lower_lie_derivatives))
-            ]
-            if self.lower_lie_derivatives is not None
-            else None
-        )
-        state_eq_constraints_result = (
-            get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
-            if self.state_eq_constraints is not None
-            else None
-        )
-        return CompatibleLagrangians(
-            lambda_y=lambda_y_result,
-            xi_y=xi_y_result,
-            y=y_result,
-            rho_minus_V=rho_minus_V_result,
-            h_plus_eps=h_plus_eps_result,
-            lower_lie_derivatives=lower_lie_derivatives_result,
-            state_eq_constraints=state_eq_constraints_result,
-        )
-
-
-@dataclass
 class CompatibleLagrangianDegrees:
     """
     The degree of the Lagrangian multipliers in CompatibleLagrangians.
@@ -238,8 +248,8 @@ class CompatibleLagrangianDegrees:
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: Optional[List[XYDegree]]
-    lower_lie_derivatives: Optional[List[List[XYDegree]]]
-    state_eq_constraints: Optional[List[XYDegree]]
+    lower_lie_derivatives: Optional[List[List[XYDegree]]] = None
+    state_eq_constraints: Optional[List[XYDegree]] = None
 
     def to_lagrangians(
         self,
@@ -376,9 +386,9 @@ class CompatibleWVrepLagrangians:
     # The SOS lagrangian multiplier multiplies with h + eps.
     h_plus_eps: Optional[np.ndarray]
     # Same as the lower_lie_derivatives in CompatibleLagrangians.
-    lower_lie_derivatives: Optional[List[np.ndarray]]
+    lower_lie_derivatives: Optional[List[np.ndarray]] = None
     # The free Lagrangian multiplier multiplies with state equality constraints.
-    state_eq_constraints: Optional[np.ndarray]
+    state_eq_constraints: Optional[np.ndarray] = None
 
     def get_result(
         self,
@@ -452,8 +462,8 @@ class CompatibleWVrepLagrangianDegrees:
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: Optional[List[XYDegree]]
-    lower_lie_derivatives: Optional[List[List[XYDegree]]]
-    state_eq_constraints: Optional[List[XYDegree]]
+    lower_lie_derivatives: Optional[List[List[XYDegree]]] = None
+    state_eq_constraints: Optional[List[XYDegree]] = None
 
     def to_lagrangians(
         self,
