@@ -61,7 +61,7 @@ class CompatibleLagrangians:
     rho_minus_V: Optional[sym.Polynomial]
     # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
     # polynomials.
-    h_plus_eps: np.ndarray
+    h_plus_eps: Optional[np.ndarray]
     # The lagragian polynomials that are multiplying with lower power of
     # lie derivatives of h(x) when we are using HOCBFs.
     # The outter list size is equal to the number of CBFs,
@@ -102,8 +102,10 @@ class CompatibleLagrangians:
             if self.rho_minus_V is not None
             else None
         )
-        h_plus_eps_result = get_polynomial_result(
-            result, self.h_plus_eps, coefficient_tol
+        h_plus_eps_result = (
+            get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
+            if self.h_plus_eps is not None
+            else None
         )
         lower_lie_derivatives_result = (
             [
