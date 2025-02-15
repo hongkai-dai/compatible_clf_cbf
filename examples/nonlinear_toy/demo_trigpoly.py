@@ -236,7 +236,7 @@ def search(use_v_rep: bool, unit_test_flag: bool = False):
             ]
         ),
         anchor_states=np.array([[0.0, 0, 0]]),
-        h_anchor_bounds=[(np.array([0]), np.array([10]))],
+        h_anchor_bounds=[(np.array([0]), np.array([0.1]))],
         weight_V=1,
         weight_h=np.array([1.0]),
         h_margins=np.array([0.01]),
@@ -368,7 +368,8 @@ def main():
 
     V, h = search(use_v_rep=False, unit_test_flag=args.unit_test)
     if not args.unit_test:
-        visualize()
+        # visualize()
+        pass
 
 
 if __name__ == "__main__":
