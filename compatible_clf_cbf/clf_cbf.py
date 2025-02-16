@@ -23,6 +23,7 @@ import pydrake.solvers as solvers
 from compatible_clf_cbf.utils import (
     BinarySearchOptions,
     ContainmentLagrangianDegree,
+    lower_lie_derivatives,
     check_array_of_polynomials,
     get_polynomial_result,
     new_sos_polynomial,
@@ -878,13 +879,42 @@ class CompatibleStatesOptions:
         x: np.ndarray,
         V: Optional[sym.Polynomial],
         h: np.ndarray,
-    ) -> Tuple[solvers.Binding[solvers.LinearCost], Optional[np.ndarray], np.ndarray]:
+        f: Optional[sym.Polynomial] = None,
+        states: Optional[np.ndarray] = None,
+    ) -> Tuple[
+            solvers.Binding[solvers.LinearCost],
+            Optional[np.ndarray],
+            np.ndarray,
+            Optional[List[np.ndarray]]
+            ]:
         """
         Adds the cost
         weight_V * ReLU(V(x_candidates) - 1 + V_margin)
            + weight_h[i] * ReLU(-h[i](x_candidates) + h_margins[i])
         """
+        # check whether the input arguments are valid:
         assert h.shape == self.weight_h.shape
+        if self.relative_degrees is not None:
+            assert len(self.relative_degrees) == h.shape[0]
+            assert len(self.kappah) == h.shape[0]
+            assert len(self.weight_lower_lie_derivatives) == h.shape[0]
+            for i in range(h.shape[0]):
+                assert (
+                    self.weight_lower_lie_derivatives[i].shape[0]
+                    == self.relative_degrees[i] - 1
+                )
+            assert f is not None
+            lower_lie_derivative_polys = [
+                lower_lie_derivatives(
+                    poly=h[i],
+                    vector_feild=f,
+                    variables=x,
+                    relative_degree=self.relative_degrees[i],
+                    betas=self.kappah[i],
+                )
+                for i in range(h.shape[0])
+            ]
+
         num_candidates = self.candidate_compatible_states.shape[0]
         if V is not None:
             # Add the slack variable representing ReLU(V(x_candidates)-1 + V_margin)
@@ -904,6 +934,7 @@ class CompatibleStatesOptions:
             )
         else:
             V_relu = None
+
         # Add the slack variable h_relu[i] representing ReLU(-h[i](x_candidates))
         h_relu = prog.NewContinuousVariables(h.shape[0], num_candidates, "h_relu")
         prog.AddBoundingBoxConstraint(0, np.inf, h_relu.reshape((-1,)))
@@ -932,8 +963,50 @@ class CompatibleStatesOptions:
             )
             assert V_relu is not None
             cost_vars = np.concatenate((cost_vars, V_relu))
+
+        # Add the constriants for the lower power of lie derivatives of h(x)
+        # here we denote relu of the lower power of lie derivatives as phi_relu
+        phi_relu = []
+        if self.relative_degrees is not None:
+            for i in range(h.shape[0]):
+                phi_i = lower_lie_derivative_polys[i]
+                assert phi_i.shape[0] == self.relative_degrees[i] - 1
+                phi_relu_i = prog.NewContinuousVariables(
+                    phi_i.shape[0], num_candidates, "phi_relu" + str(i)
+                )
+                phi_relu.append(phi_relu_i)
+                prog.AddBoundingBoxConstraint(0, np.inf, phi_relu_i.reshape((-1,)))
+                for j in range(phi_i.shape[0]):
+                    (A_phi, phi_decision_vars, b_phi) = phi_i[
+                        j
+                    ].EvaluateWithAffineCoefficients(
+                        x, self.candidate_compatible_states.T
+                    )
+                    # Now impose the constraint
+                    # phi_relu_i[j] >= -phi_i[j](x_candidates) as
+                    # A_phi * phi_decision_vars + phi_relu_i[j] >= - b_phi
+                    prog.AddLinearConstraint(
+                        np.concatenate((A_phi, np.eye(num_candidates)), axis=1),
+                        -b_phi,
+                        np.full_like(b_phi, np.inf),
+                        np.concatenate((phi_decision_vars, phi_relu_i[j])),
+                    )
+                # add the cost for phi_relu_i
+                cost_coeff = np.concatenate(
+                    (
+                        cost_coeff,
+                        (
+                            self.weight_lower_lie_derivatives[i].reshape((-1, 1))
+                            * np.ones_like(phi_relu_i)
+                        ).reshape((-1,)),
+                    )
+                )
+                cost_vars = np.concatenate((cost_vars, phi_relu_i.reshape((-1,))))
+        else:
+            phi_relu = None
+
         cost = prog.AddLinearCost(cost_coeff, 0.0, cost_vars)
-        return cost, V_relu, h_relu
+        return cost, V_relu, h_relu, phi_relu
 
     def add_constraint(
         self, prog: solvers.MathematicalProgram, x: np.ndarray, h: np.ndarray

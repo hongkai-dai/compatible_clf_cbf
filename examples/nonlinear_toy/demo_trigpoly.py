@@ -368,8 +368,7 @@ def main():
 
     V, h = search(use_v_rep=False, unit_test_flag=args.unit_test)
     if not args.unit_test:
-        # visualize()
-        pass
+        visualize()
 
 
 if __name__ == "__main__":
