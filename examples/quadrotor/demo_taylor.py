@@ -108,6 +108,7 @@ def search(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
             ),
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2, homogeneous_y=True),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2, homogeneous_y=True)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
@@ -133,6 +134,8 @@ def search(use_y_squared: bool, with_u_bound: bool, use_v_rep: bool):
         h_anchor_bounds=[(np.array([0.5]), np.array([1.0]))],
         weight_V=1,
         weight_h=np.array([1]),
+        relative_degrees=None,
+        weight_lower_lie_derivatives=None,
         V_margin=None,
         h_margins=None,
     )

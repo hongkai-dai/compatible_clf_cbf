@@ -185,6 +185,7 @@ def search(use_v_rep: bool, unit_test_flag: bool = False):
             y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0)],
+            lower_lie_derivative=None,
             state_eq_constraints=[clf_cbf.XYDegree(x=4, y=2 if use_y_squared else 1)],
         )
     else:
@@ -199,6 +200,7 @@ def search(use_v_rep: bool, unit_test_flag: bool = False):
             y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0),
             h_plus_eps=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 0)],
+            lower_lie_derivative=None,
             state_eq_constraints=[clf_cbf.XYDegree(x=2, y=2 if use_y_squared else 1)],
         )
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
@@ -239,6 +241,9 @@ def search(use_v_rep: bool, unit_test_flag: bool = False):
         h_anchor_bounds=[(np.array([0]), np.array([0.1]))],
         weight_V=1,
         weight_h=np.array([1.0]),
+        relative_degrees=None,
+        weight_lower_lie_derivatives=None,
+        V_margin=None,
         h_margins=np.array([0.01]),
     )
     solver_options = solvers.SolverOptions()
@@ -368,7 +373,8 @@ def main():
 
     V, h = search(use_v_rep=False, unit_test_flag=args.unit_test)
     if not args.unit_test:
-        visualize()
+        # visualize()
+        pass
 
 
 if __name__ == "__main__":

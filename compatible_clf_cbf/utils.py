@@ -57,7 +57,7 @@ def lie_derivative(
 
 def lower_lie_derivatives(
     poly: sym.Polynomial,
-    vector_feild: np.ndarray,
+    vector_field: np.ndarray,
     variables: np.ndarray,
     relative_degree: int,
     betas: list[float],
@@ -88,7 +88,7 @@ def lower_lie_derivatives(
         lie_derivatives = np.array(
             [
                 lie_derivative(
-                    poly=poly, vector_feild=vector_feild, variables=variables, pow=j
+                    poly=poly, vector_feild=vector_field, variables=variables, pow=j
                 )
                 for j in range(i, -1, -1)
             ]

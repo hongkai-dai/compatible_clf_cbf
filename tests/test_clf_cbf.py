@@ -63,6 +63,8 @@ class TestCompatibleStatesOptions:
             h_anchor_bounds=None,
             weight_V=1.5,
             weight_h=np.array([1.2, 1.5]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
             V_margin=0.1,
             h_margins=np.array([0.2, 0.3]),
         )
@@ -71,7 +73,14 @@ class TestCompatibleStatesOptions:
         x_set = sym.Variables(x)
         V = prog.NewFreePolynomial(x_set, 2)
         h = np.array([prog.NewFreePolynomial(x_set, 3) for i in range(2)])
-        cost, V_relu, h_relu, phi_relu = dut.add_cost(prog, x, V, h)
+        cost, V_relu, h_relu, phi_relu = dut.add_cost(
+            prog=prog,
+            x=x,
+            V=V,
+            h=h,
+            high_order_kappah=None,
+            f=None,
+            )
         assert V_relu is not None
         assert phi_relu is None
 
@@ -142,7 +151,6 @@ class TestCompatibleStatesOptions:
             weight_h=np.array([1.5, 1.2]),
             relative_degrees=[2, 2],
             weight_lower_lie_derivatives=[np.array([1.0]), np.array([1.0])],
-            kappah=[[0.1, 0.1], [0.1, 0.1]],
             V_margin=0.1,
             h_margins=np.array([0.2, 0.3]),
         )
@@ -153,7 +161,15 @@ class TestCompatibleStatesOptions:
         V = prog.NewFreePolynomial(V_x_set, 2)
         h = np.array([prog.NewFreePolynomial(h_x_set, 3) for i in range(2)])
         system_drift = np.array([sym.Polynomial(x[0]), sym.Polynomial()])
-        cost, V_relu, h_relu, phi_relu = dut.add_cost(prog, x, V, h, system_drift)
+        high_order_kappah = [[0.1, 0.1], [0.1, 0.1]]
+        cost, V_relu, h_relu, phi_relu = dut.add_cost(
+            prog=prog,
+            x=x,
+            V=V,
+            h=h,
+            high_order_kappah=high_order_kappah,
+            f=system_drift
+            )
         assert V_relu is not None
         assert phi_relu is not None
         assert len(phi_relu) == h.shape[0]
@@ -189,10 +205,10 @@ class TestCompatibleStatesOptions:
             for i in range(h.shape[0]):
                 lower_lie_derivative_polys_i = utils.lower_lie_derivatives(
                     poly=h_val[i],
-                    vector_feild=system_drift,
+                    vector_field=system_drift,
                     variables=x,
                     relative_degree=dut.relative_degrees[i],
-                    betas=dut.kappah[i],
+                    betas=high_order_kappah[i],
                 )
                 assert len(lower_lie_derivative_polys_i) == dut.relative_degrees[i]-1
                 phi_relu_expected_i = np.array(
@@ -237,6 +253,10 @@ class TestCompatibleStatesOptions:
             h_anchor_bounds=[(np.array([-0.5, 0.3, -3]), np.array([1, 4, 0.5]))],
             weight_V=1.5,
             weight_h=np.array([1.2, 1.5]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
+            V_margin=None,
+            h_margins=None,
         )
 
         prog = solvers.MathematicalProgram()
@@ -574,6 +594,7 @@ class TestClfCbf(object):
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=4, y=2),
             h_plus_eps=[mut.XYDegree(x=4, y=2) for _ in range(dut.num_cbf)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
         barrier_eps = np.array([0.01, 0.02])
@@ -629,6 +650,7 @@ class TestClfCbf(object):
             y_cross=y_cross_lagrangian,
             rho_minus_V=rho_minus_V_lagrangian,
             h_plus_eps=h_plus_eps_lagrangian,
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
 
@@ -695,6 +717,7 @@ class TestClfCbf(object):
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
@@ -769,6 +792,7 @@ class TestClfCbf(object):
             y_cross=[mut.XYDegree(x=2, y=0) for _ in range(dut.y_cross_poly.size)],
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
@@ -1040,6 +1064,7 @@ class TestClfCbfToy:
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=0),
             h_plus_eps=[mut.XYDegree(x=2, y=0)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
 
@@ -1204,6 +1229,10 @@ class TestClfCbfToy:
             h_anchor_bounds=[(np.array([0]), np.array([1]))],
             weight_V=1.0,
             weight_h=np.array([1.0]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
+            V_margin=None,
+            h_margins=None
         )
         V_new, h_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
@@ -1395,6 +1424,7 @@ class TestClfCbfWStateEqConstraints:
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=2)],
+            lower_lie_derivative=None,
             state_eq_constraints=[mut.XYDegree(x=2, y=2)],
         )
 

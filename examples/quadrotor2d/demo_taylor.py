@@ -96,6 +96,7 @@ def search_clf_cbf(
             y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=4, y=2),
             h_plus_eps=[clf_cbf.XYDegree(x=4, y=2)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
     else:
@@ -110,6 +111,7 @@ def search_clf_cbf(
             y_cross=None,
             rho_minus_V=clf_cbf.XYDegree(x=4, y=2),
             h_plus_eps=[clf_cbf.XYDegree(x=4, y=2)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
     barrier_eps = np.array([0.0])
@@ -152,6 +154,10 @@ def search_clf_cbf(
             h_anchor_bounds=[(np.array([0.0]), np.array([1]))],
             weight_V=1,
             weight_h=np.array([1]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
+            V_margin=None,
+            h_margins=None,
         )
         max_iter = 5
     else:

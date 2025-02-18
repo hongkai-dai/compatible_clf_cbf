@@ -69,13 +69,14 @@ class CompatibleLagrangians:
     # In journal paper, we use Phi(x) vector (equation (4a-b) in our journal paper)
     # to denote the lie derivatives of h(x). Since Phi^(0)(x) = h(x) and Phi^(r)(x)
     # is integrated into Lambda matrix and Xi vector, then each array in the
-    # item "lower_lie_derivatives" only contains Phi^(1)(x) to Phi^(r-1)(x).
+    # item "lower_lie_derivatives" only contains Phi^(1)(x) to Phi^(r-1)(x). For
+    # each HOCBF, Phi^(1)(x) to Phi^(r-1)(x) form an array of polynomials.
     # Also, we may have multiple HOCBFs, hence "lower_lie_derivatives" is a list of
-    # such kind of arrays.
-    lower_lie_derivative: Optional[List[np.ndarray]] = None
+    # such kind of polynomial arrays.
+    lower_lie_derivative: Optional[List[np.ndarray]]
     # The free Lagrangian polynomials multiplying the state equality
     # constraints.
-    state_eq_constraints: Optional[np.ndarray] = None
+    state_eq_constraints: Optional[np.ndarray]
 
     def get_result(
         self,
@@ -250,8 +251,8 @@ class CompatibleLagrangianDegrees:
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: Optional[List[XYDegree]]
-    lower_lie_derivative: Optional[List[List[XYDegree]]] = None
-    state_eq_constraints: Optional[List[XYDegree]] = None
+    lower_lie_derivative: Optional[List[List[XYDegree]]]
+    state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
         self,
@@ -327,16 +328,8 @@ class CompatibleLagrangianDegrees:
                     y,
                     sos_type,
                     is_sos=True,
-                    degree=(
-                        self.lower_lie_derivative[i]
-                        if self.lower_lie_derivative is not None
-                        else None
-                    ),
-                    lagrangian=(
-                        lower_lie_derivative_lagrangian[i]
-                        if lower_lie_derivative_lagrangian is not None
-                        else None
-                    ),
+                    degree=self.lower_lie_derivative[i],
+                    lagrangian=lower_lie_derivative_lagrangian[i],
                 )
                 for i in range(len(self.lower_lie_derivative))
             ]
@@ -388,9 +381,9 @@ class CompatibleWVrepLagrangians:
     # The SOS lagrangian multiplier multiplies with h + eps.
     h_plus_eps: Optional[np.ndarray]
     # Same as the lower_lie_derivatives in CompatibleLagrangians.
-    lower_lie_derivative: Optional[List[np.ndarray]] = None
+    lower_lie_derivative: Optional[List[np.ndarray]]
     # The free Lagrangian multiplier multiplies with state equality constraints.
-    state_eq_constraints: Optional[np.ndarray] = None
+    state_eq_constraints: Optional[np.ndarray]
 
     def get_result(
         self,
@@ -464,8 +457,8 @@ class CompatibleWVrepLagrangianDegrees:
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: Optional[List[XYDegree]]
-    lower_lie_derivative: Optional[List[List[XYDegree]]] = None
-    state_eq_constraints: Optional[List[XYDegree]] = None
+    lower_lie_derivative: Optional[List[List[XYDegree]]]
+    state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
         self,
@@ -548,16 +541,8 @@ class CompatibleWVrepLagrangianDegrees:
                         y,
                         sos_type,
                         is_sos=True,
-                        degree=(
-                            self.lower_lie_derivative[i]
-                            if self.lower_lie_derivative is not None
-                            else None
-                        ),
-                        lagrangian=(
-                            lower_lie_derivative_lagrangian[i]
-                            if lower_lie_derivative_lagrangian is not None
-                            else None
-                        ),
+                        degree=self.lower_lie_derivative[i],
+                        lagrangian=lower_lie_derivative_lagrangian[i],
                     )
                     for i in range(len(self.lower_lie_derivative))
                 ]
@@ -864,14 +849,13 @@ class CompatibleStatesOptions:
     # derivatives of h(x), meaning that the candidate states should also be
     # included in {x|Phi(x)>=0}.
     # If the cbf is not high-order, the following three items should be None.
-    relative_degrees: Optional[List[int]] = None
-    weight_lower_lie_derivatives: Optional[List[np.ndarray]] = None
-    kappah: Optional[List[List[float]]] = None
+    relative_degrees: Optional[List[int]]
+    weight_lower_lie_derivatives: Optional[List[np.ndarray]]
 
     # If not None, then we penalize the violation of V <= 1 - V_margin
-    V_margin: Optional[float] = None
+    V_margin: Optional[float]
     # If not None, then we penalize the violation of h[i] >= h_margins[i]
-    h_margins: Optional[np.ndarray] = None
+    h_margins: Optional[np.ndarray]
 
     def add_cost(
         self,
@@ -879,8 +863,10 @@ class CompatibleStatesOptions:
         x: np.ndarray,
         V: Optional[sym.Polynomial],
         h: np.ndarray,
-        f: Optional[sym.Polynomial] = None,
-        states: Optional[np.ndarray] = None,
+        # this kappah is not None only when we have HOCBFs
+        high_order_kappah: Optional[List[List[float]]],
+        # this f is not None only when we have HOCBFs
+        f: Optional[np.ndarray]
     ) -> Tuple[
             solvers.Binding[solvers.LinearCost],
             Optional[np.ndarray],
@@ -896,7 +882,7 @@ class CompatibleStatesOptions:
         assert h.shape == self.weight_h.shape
         if self.relative_degrees is not None:
             assert len(self.relative_degrees) == h.shape[0]
-            assert len(self.kappah) == h.shape[0]
+            assert len(high_order_kappah) == h.shape[0]
             assert len(self.weight_lower_lie_derivatives) == h.shape[0]
             for i in range(h.shape[0]):
                 assert (
@@ -907,10 +893,10 @@ class CompatibleStatesOptions:
             lower_lie_derivative_polys = [
                 lower_lie_derivatives(
                     poly=h[i],
-                    vector_feild=f,
+                    vector_field=f,
                     variables=x,
                     relative_degree=self.relative_degrees[i],
-                    betas=self.kappah[i],
+                    betas=high_order_kappah[i],
                 )
                 for i in range(h.shape[0])
             ]
@@ -1519,7 +1505,9 @@ class CompatibleClfCbf:
                 prog, V, h, ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c
             )
         elif compatible_states_options is not None:
-            self._add_compatible_states_options(prog, V, h, compatible_states_options)
+            self._add_compatible_states_options(
+                prog, V, h, compatible_states_options, high_order_kappah=None
+                )
 
         result = solve_with_id(
             prog, solver_id, solver_options, backoff_rel_scale, backoff_abs_scale
@@ -2522,8 +2510,28 @@ class CompatibleClfCbf:
         V: Optional[sym.Polynomial],
         h: np.ndarray,
         compatible_states_options: CompatibleStatesOptions,
+        # set the following arguments for HOCBFs:
+        high_order_kappah: Optional[List[List[float]]]
     ):
-        compatible_states_options.add_cost(prog, self.x, V, h)
+        if high_order_kappah is not None:
+            assert len(high_order_kappah) == len(h)
+            compatible_states_options.add_cost(
+                prog=prog,
+                x=self.x,
+                V=V,
+                h=h,
+                high_order_kappah=high_order_kappah,
+                f=self.f
+                )
+        else:
+            compatible_states_options.add_cost(
+                prog=prog,
+                x=self.x,
+                V=V,
+                h=h,
+                high_order_kappah=None,
+                f=None
+                )
         compatible_states_options.add_constraint(prog, self.x, h)
 
     def _get_V_contain_ellipsoid_lagrangian_degree(
