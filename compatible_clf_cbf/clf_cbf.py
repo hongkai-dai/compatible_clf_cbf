@@ -318,6 +318,9 @@ class CompatibleLagrangianDegrees:
             degree=self.h_plus_eps,
             lagrangian=h_plus_eps_lagrangian,
         )
+        assert (self.lower_lie_derivative is None) == (
+            lower_lie_derivative_lagrangian is None
+        )
         lower_lie_derivative = (
             None
             if self.lower_lie_derivative is None
@@ -866,13 +869,13 @@ class CompatibleStatesOptions:
         # this kappah is not None only when we have HOCBFs
         high_order_kappah: Optional[List[List[float]]],
         # this f is not None only when we have HOCBFs
-        f: Optional[np.ndarray]
+        f: Optional[np.ndarray],
     ) -> Tuple[
-            solvers.Binding[solvers.LinearCost],
-            Optional[np.ndarray],
-            np.ndarray,
-            Optional[List[np.ndarray]]
-            ]:
+        solvers.Binding[solvers.LinearCost],
+        Optional[np.ndarray],
+        np.ndarray,
+        Optional[List[np.ndarray]],
+    ]:
         """
         Adds the cost
         weight_V * ReLU(V(x_candidates) - 1 + V_margin)
@@ -1507,7 +1510,7 @@ class CompatibleClfCbf:
         elif compatible_states_options is not None:
             self._add_compatible_states_options(
                 prog, V, h, compatible_states_options, high_order_kappah=None
-                )
+            )
 
         result = solve_with_id(
             prog, solver_id, solver_options, backoff_rel_scale, backoff_abs_scale
@@ -2511,27 +2514,18 @@ class CompatibleClfCbf:
         h: np.ndarray,
         compatible_states_options: CompatibleStatesOptions,
         # set the following arguments for HOCBFs:
-        high_order_kappah: Optional[List[List[float]]]
+        high_order_kappah: Optional[List[List[float]]],
     ):
         if high_order_kappah is not None:
             assert len(high_order_kappah) == len(h)
-            compatible_states_options.add_cost(
-                prog=prog,
-                x=self.x,
-                V=V,
-                h=h,
-                high_order_kappah=high_order_kappah,
-                f=self.f
-                )
-        else:
-            compatible_states_options.add_cost(
-                prog=prog,
-                x=self.x,
-                V=V,
-                h=h,
-                high_order_kappah=None,
-                f=None
-                )
+        compatible_states_options.add_cost(
+            prog=prog,
+            x=self.x,
+            V=V,
+            h=h,
+            high_order_kappah=high_order_kappah,
+            f=None if high_order_kappah is None else self.f,
+        )
         compatible_states_options.add_constraint(prog, self.x, h)
 
     def _get_V_contain_ellipsoid_lagrangian_degree(
