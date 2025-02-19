@@ -51,6 +51,7 @@ def main(use_y_squared: bool, with_u_bound: bool):
         y_cross=None,
         rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
         h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
+        lower_lie_derivative=None,
         state_eq_constraints=None,
     )
     barrier_eps = np.array([0.0001])

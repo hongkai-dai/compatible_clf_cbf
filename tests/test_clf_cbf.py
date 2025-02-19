@@ -56,13 +56,15 @@ class TestCompatibleLagrangianDegrees(object):
 
 
 class TestCompatibleStatesOptions:
-    def test_add_cost(self):
+    def test_add_cost_for_single_order_cbfs(self):
         dut = mut.CompatibleStatesOptions(
             candidate_compatible_states=np.array([[0.2, 0.5], [-0.1, 1.2], [0.3, 2]]),
             anchor_states=None,
             h_anchor_bounds=None,
             weight_V=1.5,
             weight_h=np.array([1.2, 1.5]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
             V_margin=0.1,
             h_margins=np.array([0.2, 0.3]),
         )
@@ -71,8 +73,16 @@ class TestCompatibleStatesOptions:
         x_set = sym.Variables(x)
         V = prog.NewFreePolynomial(x_set, 2)
         h = np.array([prog.NewFreePolynomial(x_set, 3) for i in range(2)])
-        cost, V_relu, h_relu = dut.add_cost(prog, x, V, h)
+        cost, V_relu, h_relu, phi_relu = dut.add_cost(
+            prog=prog,
+            x=x,
+            V=V,
+            h=h,
+            high_order_kappah=None,
+            f=None,
+            )
         assert V_relu is not None
+        assert phi_relu is None
 
         def check_feasible(
             V_val: sym.Polynomial,
@@ -111,6 +121,7 @@ class TestCompatibleStatesOptions:
                 for c in constraints:
                     prog.RemoveConstraint(c)
 
+        # The test cases:
         check_feasible(
             sym.Polynomial(2 * x[0] * x[0] + 3 * x[1] * x[0] + 2 + 2 * x[1]),
             np.array(
@@ -130,6 +141,111 @@ class TestCompatibleStatesOptions:
             ),
         )
 
+    def test_add_cost_for_higher_order_cbfs(self):
+        # Create a test environment with HOCBFs:
+        dut = mut.CompatibleStatesOptions(
+            candidate_compatible_states=np.array([[0, 0.1], [0.2, 0.4], [0.2, -0.1]]),
+            anchor_states=None,
+            h_anchor_bounds=None,
+            weight_V=1.5,
+            weight_h=np.array([1.5, 1.2]),
+            relative_degrees=[2, 2],
+            weight_lower_lie_derivatives=[np.array([1.0]), np.array([1.0])],
+            V_margin=0.1,
+            h_margins=np.array([0.2, 0.3]),
+        )
+        prog = solvers.MathematicalProgram()
+        x = prog.NewIndeterminates(2, "x")
+        V_x_set = sym.Variables(x)
+        h_x_set = sym.Variables(np.array([x[0]]))
+        V = prog.NewFreePolynomial(V_x_set, 2)
+        h = np.array([prog.NewFreePolynomial(h_x_set, 3) for i in range(2)])
+        system_drift = np.array([sym.Polynomial(x[0]), sym.Polynomial()])
+        high_order_kappah = [[0.1, 0.1], [0.1, 0.1]]
+        cost, V_relu, h_relu, phi_relu = dut.add_cost(
+            prog=prog,
+            x=x,
+            V=V,
+            h=h,
+            high_order_kappah=high_order_kappah,
+            f=system_drift
+            )
+        assert V_relu is not None
+        assert phi_relu is not None
+        assert len(phi_relu) == h.shape[0]
+
+        # Define the test function:
+        def check_feasible(V_val: sym.Polynomial, h_val: np.ndarray):
+            constraint1 = prog.AddEqualityConstraintBetweenPolynomials(V, V_val)
+            constraint2 = prog.AddEqualityConstraintBetweenPolynomials(h[0], h_val[0])
+            constraint3 = prog.AddEqualityConstraintBetweenPolynomials(h[1], h_val[1])
+            result = solvers.Solve(prog)
+            assert result.is_success()
+
+            h_relu_expected = np.array(
+                [
+                    np.maximum(
+                        -h_val[i].EvaluateIndeterminates(
+                            x, dut.candidate_compatible_states.T
+                        )
+                        + (0 if dut.h_margins is None else dut.h_margins[i]),
+                        np.zeros(dut.candidate_compatible_states.shape[0]),
+                    ).reshape((-1,))
+                    for i in range(h.shape[0])
+                ]
+            )
+
+            V_relu_expected = np.maximum(
+                V_val.EvaluateIndeterminates(x, dut.candidate_compatible_states.T)
+                - (1 - (0 if dut.V_margin is None else dut.V_margin)),
+                np.zeros(dut.candidate_compatible_states.shape[0]),
+            )
+
+            phi_relu_expected = []
+            for i in range(h.shape[0]):
+                lower_lie_derivative_polys_i = utils.lower_lie_derivatives(
+                    poly=h_val[i],
+                    vector_field=system_drift,
+                    variables=x,
+                    relative_degree=dut.relative_degrees[i],
+                    betas=high_order_kappah[i],
+                )
+                assert len(lower_lie_derivative_polys_i) == dut.relative_degrees[i]-1
+                phi_relu_expected_i = np.array(
+                    [
+                        np.maximum(
+                            np.zeros(dut.candidate_compatible_states.shape[0]),
+                            -lower_lie_derivative_polys_i[j].EvaluateIndeterminates(
+                                x, dut.candidate_compatible_states.T
+                            )
+                        ).reshape((-1,))
+                        for j in range(dut.relative_degrees[i]-1)
+                    ]
+                )
+                phi_relu_expected.append(phi_relu_expected_i)
+
+            np.testing.assert_allclose(result.GetSolution(V_relu), V_relu_expected)
+            np.testing.assert_allclose(result.GetSolution(h_relu), h_relu_expected)
+            for i in range(len(phi_relu)):
+                np.testing.assert_allclose(
+                    result.GetSolution(phi_relu[i]),
+                    phi_relu_expected[i]
+                    )
+
+            for constraints in [constraint1, constraint2, constraint3]:
+                for c in constraints:
+                    prog.RemoveConstraint(c)
+
+        # The test cases:
+        check_feasible(
+            V_val=sym.Polynomial(x[0] ** 2 + 2 * x[1] ** 2),
+            h_val=np.array([sym.Polynomial(x[0] + 1), sym.Polynomial(-x[0] + 1)]),
+        )
+        check_feasible(
+            V_val=sym.Polynomial(x[0] ** 2 + 2 * x[1] ** 2),
+            h_val=np.array([sym.Polynomial(x[0] + 0.1), sym.Polynomial(-x[0] + 0.1)]),
+        )
+
     def test_add_constraint(self):
         dut = mut.CompatibleStatesOptions(
             candidate_compatible_states=np.array([[0.2, 0.5], [-0.1, 1.2], [0.3, 2]]),
@@ -137,6 +253,10 @@ class TestCompatibleStatesOptions:
             h_anchor_bounds=[(np.array([-0.5, 0.3, -3]), np.array([1, 4, 0.5]))],
             weight_V=1.5,
             weight_h=np.array([1.2, 1.5]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
+            V_margin=None,
+            h_margins=None,
         )
 
         prog = solvers.MathematicalProgram()
@@ -474,6 +594,7 @@ class TestClfCbf(object):
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=4, y=2),
             h_plus_eps=[mut.XYDegree(x=4, y=2) for _ in range(dut.num_cbf)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
         barrier_eps = np.array([0.01, 0.02])
@@ -529,6 +650,7 @@ class TestClfCbf(object):
             y_cross=y_cross_lagrangian,
             rho_minus_V=rho_minus_V_lagrangian,
             h_plus_eps=h_plus_eps_lagrangian,
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
 
@@ -595,6 +717,7 @@ class TestClfCbf(object):
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
@@ -669,6 +792,7 @@ class TestClfCbf(object):
             y_cross=[mut.XYDegree(x=2, y=0) for _ in range(dut.y_cross_poly.size)],
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(h.size)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
@@ -940,6 +1064,7 @@ class TestClfCbfToy:
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=0),
             h_plus_eps=[mut.XYDegree(x=2, y=0)],
+            lower_lie_derivative=None,
             state_eq_constraints=None,
         )
 
@@ -1104,6 +1229,10 @@ class TestClfCbfToy:
             h_anchor_bounds=[(np.array([0]), np.array([1]))],
             weight_V=1.0,
             weight_h=np.array([1.0]),
+            relative_degrees=None,
+            weight_lower_lie_derivatives=None,
+            V_margin=None,
+            h_margins=None
         )
         V_new, h_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
@@ -1295,6 +1424,7 @@ class TestClfCbfWStateEqConstraints:
             y_cross=None,
             rho_minus_V=mut.XYDegree(x=2, y=2),
             h_plus_eps=[mut.XYDegree(x=2, y=2)],
+            lower_lie_derivative=None,
             state_eq_constraints=[mut.XYDegree(x=2, y=2)],
         )
 

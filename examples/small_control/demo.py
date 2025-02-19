@@ -45,6 +45,7 @@ def main():
         y_cross=None,
         rho_minus_V=None,
         h_plus_eps=None,
+        lower_lie_derivative=None,
         state_eq_constraints=None,
     )
     barrier_eps = None

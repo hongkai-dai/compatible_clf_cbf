@@ -61,7 +61,7 @@ def test_lower_lie_drivatives():
     expected_ouput = np.array([sym.Polynomial(x[0] + x[1] + 1)])
     output = mut.lower_lie_derivatives(
         poly=b,
-        vector_feild=f,
+        vector_field=f,
         variables=x,
         relative_degree=r,
         betas=betas,

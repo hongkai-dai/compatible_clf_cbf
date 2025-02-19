@@ -23,6 +23,7 @@ import pydrake.solvers as solvers
 from compatible_clf_cbf.utils import (
     BinarySearchOptions,
     ContainmentLagrangianDegree,
+    lower_lie_derivatives,
     check_array_of_polynomials,
     get_polynomial_result,
     new_sos_polynomial,
@@ -61,6 +62,18 @@ class CompatibleLagrangians:
     # The Lagrangian polynomials multiplies with h(x)+ε. Should be an array of SOS
     # polynomials.
     h_plus_eps: Optional[np.ndarray]
+    # The lagragian polynomials that are multiplying with lower power of
+    # lie derivatives of h(x) when we are using HOCBFs.
+    # The outter list size is equal to the number of CBFs,
+    # the inner array size is equal to the corresponding HOCBF's relative degree-1.
+    # In journal paper, we use Phi(x) vector (equation (4a-b) in our journal paper)
+    # to denote the lie derivatives of h(x). Since Phi^(0)(x) = h(x) and Phi^(r)(x)
+    # is integrated into Lambda matrix and Xi vector, then each array in the
+    # item "lower_lie_derivatives" only contains Phi^(1)(x) to Phi^(r-1)(x). For
+    # each HOCBF, Phi^(1)(x) to Phi^(r-1)(x) form an array of polynomials.
+    # Also, we may have multiple HOCBFs, hence "lower_lie_derivatives" is a list of
+    # such kind of polynomial arrays.
+    lower_lie_derivative: Optional[List[np.ndarray]]
     # The free Lagrangian polynomials multiplying the state equality
     # constraints.
     state_eq_constraints: Optional[np.ndarray]
@@ -95,6 +108,16 @@ class CompatibleLagrangians:
             if self.h_plus_eps is not None
             else None
         )
+        lower_lie_derivative_result = (
+            [
+                get_polynomial_result(
+                    result, self.lower_lie_derivative[i], coefficient_tol
+                )
+                for i in range(len(self.lower_lie_derivative))
+            ]
+            if self.lower_lie_derivative is not None
+            else None
+        )
         state_eq_constraints_result = (
             get_polynomial_result(result, self.state_eq_constraints, coefficient_tol)
             if self.state_eq_constraints is not None
@@ -107,6 +130,7 @@ class CompatibleLagrangians:
             y_cross=y_cross_result,
             rho_minus_V=rho_minus_V_result,
             h_plus_eps=h_plus_eps_result,
+            lower_lie_derivative=lower_lie_derivative_result,
             state_eq_constraints=state_eq_constraints_result,
         )
 
@@ -227,6 +251,7 @@ class CompatibleLagrangianDegrees:
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: Optional[List[XYDegree]]
+    lower_lie_derivative: Optional[List[List[XYDegree]]]
     state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
@@ -242,6 +267,7 @@ class CompatibleLagrangianDegrees:
         y_cross_lagrangian: Optional[np.ndarray] = None,
         rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
         h_plus_eps_lagrangian: Optional[np.ndarray] = None,
+        lower_lie_derivative_lagrangian: Optional[List[np.ndarray]] = None,
         state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
     ) -> CompatibleLagrangians:
         lambda_y = _to_lagrangian_impl(
@@ -292,6 +318,25 @@ class CompatibleLagrangianDegrees:
             degree=self.h_plus_eps,
             lagrangian=h_plus_eps_lagrangian,
         )
+        assert (self.lower_lie_derivative is None) == (
+            lower_lie_derivative_lagrangian is None
+        )
+        lower_lie_derivative = (
+            None
+            if self.lower_lie_derivative is None
+            else [
+                _to_lagrangian_impl(
+                    prog,
+                    x,
+                    y,
+                    sos_type,
+                    is_sos=True,
+                    degree=self.lower_lie_derivative[i],
+                    lagrangian=lower_lie_derivative_lagrangian[i],
+                )
+                for i in range(len(self.lower_lie_derivative))
+            ]
+        )
         state_eq_constraints = _to_lagrangian_impl(
             prog,
             x,
@@ -308,6 +353,7 @@ class CompatibleLagrangianDegrees:
             y_cross=y_cross_lagrangian_new,
             rho_minus_V=rho_minus_V,
             h_plus_eps=h_plus_eps,
+            lower_lie_derivative=lower_lie_derivative,
             state_eq_constraints=state_eq_constraints,
         )
 
@@ -337,6 +383,8 @@ class CompatibleWVrepLagrangians:
     rho_minus_V: Optional[sym.Polynomial]
     # The SOS lagrangian multiplier multiplies with h + eps.
     h_plus_eps: Optional[np.ndarray]
+    # Same as the lower_lie_derivatives in CompatibleLagrangians.
+    lower_lie_derivative: Optional[List[np.ndarray]]
     # The free Lagrangian multiplier multiplies with state equality constraints.
     state_eq_constraints: Optional[np.ndarray]
 
@@ -375,6 +423,16 @@ class CompatibleWVrepLagrangians:
             if self.h_plus_eps is None
             else get_polynomial_result(result, self.h_plus_eps, coefficient_tol)
         )
+        lower_lie_derivative_result = (
+            [
+                get_polynomial_result(
+                    result, self.lower_lie_derivative[i], coefficient_tol
+                )
+                for i in range(len(self.lower_lie_derivative))
+            ]
+            if self.lower_lie_derivative is not None
+            else None
+        )
         state_eq_constraints = (
             None
             if self.state_eq_constraints is None
@@ -389,6 +447,7 @@ class CompatibleWVrepLagrangians:
             y_cross,
             rho_minus_V,
             h_plus_eps,
+            lower_lie_derivative_result,
             state_eq_constraints,
         )
 
@@ -401,6 +460,7 @@ class CompatibleWVrepLagrangianDegrees:
     y_cross: Optional[List[XYDegree]]
     rho_minus_V: Optional[XYDegree]
     h_plus_eps: Optional[List[XYDegree]]
+    lower_lie_derivative: Optional[List[List[XYDegree]]]
     state_eq_constraints: Optional[List[XYDegree]]
 
     def to_lagrangians(
@@ -416,6 +476,7 @@ class CompatibleWVrepLagrangianDegrees:
         y_cross_lagrangian: Optional[np.ndarray] = None,
         rho_minus_V_lagrangian: Optional[sym.Polynomial] = None,
         h_plus_eps_lagrangian: Optional[np.ndarray] = None,
+        lower_lie_derivative_lagrangian: Optional[List[np.ndarray]] = None,
         state_eq_constraints_lagrangian: Optional[np.ndarray] = None,
     ) -> CompatibleWVrepLagrangians:
         return CompatibleWVrepLagrangians(
@@ -472,6 +533,22 @@ class CompatibleWVrepLagrangianDegrees:
                 is_sos=True,
                 degree=self.h_plus_eps,
                 lagrangian=h_plus_eps_lagrangian,
+            ),
+            lower_lie_derivative=(
+                None
+                if self.lower_lie_derivative is None
+                else [
+                    _to_lagrangian_impl(
+                        prog,
+                        x,
+                        y,
+                        sos_type,
+                        is_sos=True,
+                        degree=self.lower_lie_derivative[i],
+                        lagrangian=lower_lie_derivative_lagrangian[i],
+                    )
+                    for i in range(len(self.lower_lie_derivative))
+                ]
             ),
             state_eq_constraints=_to_lagrangian_impl(
                 prog,
@@ -770,10 +847,18 @@ class CompatibleStatesOptions:
     #    + weight_h[i] * ReLU(-h[i](x_candidates) + h_margins[i])
     weight_V: Optional[float]
     weight_h: np.ndarray
+
+    # if we have HOCBF, then we also need to penalize the lower power of lie
+    # derivatives of h(x), meaning that the candidate states should also be
+    # included in {x|Phi(x)>=0}.
+    # If the cbf is not high-order, the following three items should be None.
+    relative_degrees: Optional[List[int]]
+    weight_lower_lie_derivatives: Optional[List[np.ndarray]]
+
     # If not None, then we penalize the violation of V <= 1 - V_margin
-    V_margin: Optional[float] = None
+    V_margin: Optional[float]
     # If not None, then we penalize the violation of h[i] >= h_margins[i]
-    h_margins: Optional[np.ndarray] = None
+    h_margins: Optional[np.ndarray]
 
     def add_cost(
         self,
@@ -781,13 +866,44 @@ class CompatibleStatesOptions:
         x: np.ndarray,
         V: Optional[sym.Polynomial],
         h: np.ndarray,
-    ) -> Tuple[solvers.Binding[solvers.LinearCost], Optional[np.ndarray], np.ndarray]:
+        # this kappah is not None only when we have HOCBFs
+        high_order_kappah: Optional[List[List[float]]],
+        # this f is not None only when we have HOCBFs
+        f: Optional[np.ndarray],
+    ) -> Tuple[
+        solvers.Binding[solvers.LinearCost],
+        Optional[np.ndarray],
+        np.ndarray,
+        Optional[List[np.ndarray]],
+    ]:
         """
         Adds the cost
         weight_V * ReLU(V(x_candidates) - 1 + V_margin)
            + weight_h[i] * ReLU(-h[i](x_candidates) + h_margins[i])
         """
+        # check whether the input arguments are valid:
         assert h.shape == self.weight_h.shape
+        if self.relative_degrees is not None:
+            assert len(self.relative_degrees) == h.shape[0]
+            assert len(high_order_kappah) == h.shape[0]
+            assert len(self.weight_lower_lie_derivatives) == h.shape[0]
+            for i in range(h.shape[0]):
+                assert (
+                    self.weight_lower_lie_derivatives[i].shape[0]
+                    == self.relative_degrees[i] - 1
+                )
+            assert f is not None
+            lower_lie_derivative_polys = [
+                lower_lie_derivatives(
+                    poly=h[i],
+                    vector_field=f,
+                    variables=x,
+                    relative_degree=self.relative_degrees[i],
+                    betas=high_order_kappah[i],
+                )
+                for i in range(h.shape[0])
+            ]
+
         num_candidates = self.candidate_compatible_states.shape[0]
         if V is not None:
             # Add the slack variable representing ReLU(V(x_candidates)-1 + V_margin)
@@ -807,6 +923,7 @@ class CompatibleStatesOptions:
             )
         else:
             V_relu = None
+
         # Add the slack variable h_relu[i] representing ReLU(-h[i](x_candidates))
         h_relu = prog.NewContinuousVariables(h.shape[0], num_candidates, "h_relu")
         prog.AddBoundingBoxConstraint(0, np.inf, h_relu.reshape((-1,)))
@@ -835,8 +952,50 @@ class CompatibleStatesOptions:
             )
             assert V_relu is not None
             cost_vars = np.concatenate((cost_vars, V_relu))
+
+        # Add the constriants for the lower power of lie derivatives of h(x)
+        # here we denote relu of the lower power of lie derivatives as phi_relu
+        phi_relu = []
+        if self.relative_degrees is not None:
+            for i in range(h.shape[0]):
+                phi_i = lower_lie_derivative_polys[i]
+                assert phi_i.shape[0] == self.relative_degrees[i] - 1
+                phi_relu_i = prog.NewContinuousVariables(
+                    phi_i.shape[0], num_candidates, "phi_relu" + str(i)
+                )
+                phi_relu.append(phi_relu_i)
+                prog.AddBoundingBoxConstraint(0, np.inf, phi_relu_i.reshape((-1,)))
+                for j in range(phi_i.shape[0]):
+                    (A_phi, phi_decision_vars, b_phi) = phi_i[
+                        j
+                    ].EvaluateWithAffineCoefficients(
+                        x, self.candidate_compatible_states.T
+                    )
+                    # Now impose the constraint
+                    # phi_relu_i[j] >= -phi_i[j](x_candidates) as
+                    # A_phi * phi_decision_vars + phi_relu_i[j] >= - b_phi
+                    prog.AddLinearConstraint(
+                        np.concatenate((A_phi, np.eye(num_candidates)), axis=1),
+                        -b_phi,
+                        np.full_like(b_phi, np.inf),
+                        np.concatenate((phi_decision_vars, phi_relu_i[j])),
+                    )
+                # add the cost for phi_relu_i
+                cost_coeff = np.concatenate(
+                    (
+                        cost_coeff,
+                        (
+                            self.weight_lower_lie_derivatives[i].reshape((-1, 1))
+                            * np.ones_like(phi_relu_i)
+                        ).reshape((-1,)),
+                    )
+                )
+                cost_vars = np.concatenate((cost_vars, phi_relu_i.reshape((-1,))))
+        else:
+            phi_relu = None
+
         cost = prog.AddLinearCost(cost_coeff, 0.0, cost_vars)
-        return cost, V_relu, h_relu
+        return cost, V_relu, h_relu, phi_relu
 
     def add_constraint(
         self, prog: solvers.MathematicalProgram, x: np.ndarray, h: np.ndarray
@@ -1349,7 +1508,9 @@ class CompatibleClfCbf:
                 prog, V, h, ellipsoid_inner.S, ellipsoid_inner.b, ellipsoid_inner.c
             )
         elif compatible_states_options is not None:
-            self._add_compatible_states_options(prog, V, h, compatible_states_options)
+            self._add_compatible_states_options(
+                prog, V, h, compatible_states_options, high_order_kappah=None
+            )
 
         result = solve_with_id(
             prog, solver_id, solver_options, backoff_rel_scale, backoff_abs_scale
@@ -2352,8 +2513,19 @@ class CompatibleClfCbf:
         V: Optional[sym.Polynomial],
         h: np.ndarray,
         compatible_states_options: CompatibleStatesOptions,
+        # set the following arguments for HOCBFs:
+        high_order_kappah: Optional[List[List[float]]],
     ):
-        compatible_states_options.add_cost(prog, self.x, V, h)
+        if high_order_kappah is not None:
+            assert len(high_order_kappah) == len(h)
+        compatible_states_options.add_cost(
+            prog=prog,
+            x=self.x,
+            V=V,
+            h=h,
+            high_order_kappah=high_order_kappah,
+            f=None if high_order_kappah is None else self.f,
+        )
         compatible_states_options.add_constraint(prog, self.x, h)
 
     def _get_V_contain_ellipsoid_lagrangian_degree(

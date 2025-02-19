@@ -110,6 +110,7 @@ def search(use_y_squared: bool):
         y_cross=None,
         rho_minus_V=clf_cbf.XYDegree(x=4, y=2),
         h_plus_eps=[clf_cbf.XYDegree(x=4, y=2)],
+        lower_lie_derivative=None,
         state_eq_constraints=None,
     )
 
@@ -135,6 +136,8 @@ def search(use_y_squared: bool):
         h_anchor_bounds=[[np.array([0.1]), np.array([1])]],
         weight_V=1,
         weight_h=np.array([1]),
+        relative_degrees=None,
+        weight_lower_lie_derivatives=None,
         V_margin=0,
         h_margins=np.array([0.01]),
     )

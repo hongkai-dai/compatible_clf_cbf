@@ -48,6 +48,7 @@ def main(with_u_bound: bool):
         y_cross=None,
         rho_minus_V=clf_cbf.XYDegree(x=2, y=2),
         h_plus_eps=[clf_cbf.XYDegree(x=2, y=2)],
+        lower_lie_derivative=None,
         state_eq_constraints=None,
     )
     safety_sets_lagrangian_degrees = clf_cbf.SafetySetLagrangianDegrees(
