@@ -1939,7 +1939,7 @@ class CompatibleClfCbf:
                [-∂V/∂x*f(x)-κ_V*V(x)]
                [                 bu ]
 
-        In the jornal paper, the HOCBF formula is given by a vecotr Phi(x)≥ 0
+        In the journal paper, the HOCBF formula is given by a vector Phi(x)≥ 0
         If the HOCBF has relative degree r, then the Phi(x) vector would be:
         Phi(x) = [Phi_0(x), Phi_1(x), ..., Phi_(r-1)(x), Phi_r(x)],
         where Phi_0(x) = h(x), Phi_1(x)...Phi_(r-1)(x) are computed by
@@ -1994,19 +1994,22 @@ class CompatibleClfCbf:
             for i in range(self.num_cbf):
                 current_cbf = h[i]
                 current_r = relative_degrees[i]
+                # xi part
                 beta_vector = elementary_symmetric_polynomials(high_order_kappah[i])
-                lie_derivative_vector = np.array([
-                    lie_derivative(
-                        poly=current_cbf,
+                lie_derivative_vector = np.empty(
+                    shape=(current_r+1,), dtype=sym.Polynomial
+                    )
+                lie_derivative_vector[-1] = current_cbf
+                for j in range(current_r, 0, -1):
+                    lie_derivative_vector[j-1] = lie_derivative(
+                        poly=lie_derivative_vector[j],
                         vector_feild=self.f,
                         variables=self.x,
-                        pow=j
-                        )
-                    for j in range(current_r, -1, -1)
-                ])
+                        pow=1
+                    )
                 xi_element = np.dot(lie_derivative_vector, beta_vector)
                 xi[i] = xi_element
-
+                # lambda part
                 Lfb_r_1 = lie_derivative(
                     poly=current_cbf,
                     vector_feild=self.f,
