@@ -23,6 +23,8 @@ import pydrake.solvers as solvers
 from compatible_clf_cbf.utils import (
     BinarySearchOptions,
     ContainmentLagrangianDegree,
+    elementary_symmetric_polynomials,
+    lie_derivative,
     lower_lie_derivatives,
     check_array_of_polynomials,
     get_polynomial_result,
@@ -1086,9 +1088,10 @@ class CompatibleClfCbf:
         u_vertices: Optional[np.ndarray] = None,
         u_extreme_rays: Optional[np.ndarray] = None,
         num_cbf: int = 1,
+        high_order_cbf: bool = False,
         with_clf: bool = True,
         use_y_squared: bool = True,
-        state_eq_constraints: Optional[np.ndarray] = None,
+        state_eq_constraints: Optional[np.ndarray] = None
     ):
         """
         Args:
@@ -1156,6 +1159,9 @@ class CompatibleClfCbf:
         self.x_set: sym.Variables = sym.Variables(x)
         check_array_of_polynomials(f, self.x_set)
         check_array_of_polynomials(g, self.x_set)
+        assert (
+            (exclude_sets != []) or (within_set is not None)
+        ), "The exclude_sets and within_set cannot be both None"
         self.exclude_sets = exclude_sets
         self.within_set = within_set
         assert (Au is None) == (bu is None)
@@ -1181,6 +1187,7 @@ class CompatibleClfCbf:
         self.with_clf = with_clf
         self.use_y_squared = use_y_squared
         self.num_cbf = num_cbf
+        self.high_order_cbf = high_order_cbf
         y_size = (
             self.num_cbf
             + (1 if self.with_clf else 0)
@@ -1367,7 +1374,12 @@ class CompatibleClfCbf:
         )
 
         xi, lambda_mat = self._calc_xi_Lambda(
-            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
+            V=V,
+            h=h,
+            kappa_V=kappa_V,
+            kappa_h=kappa_h,
+            high_order_kappah=None,
+            relative_degrees=None,
         )
         if self.u_vertices is not None or self.u_extreme_rays is not None:
             assert isinstance(lagrangians, CompatibleWVrepLagrangians)
@@ -1912,7 +1924,9 @@ class CompatibleClfCbf:
         V: Optional[sym.Polynomial],
         h: np.ndarray,
         kappa_V: Optional[float],
-        kappa_h: np.ndarray,
+        kappa_h: Optional[np.ndarray],
+        high_order_kappah: Optional[np.ndarray],
+        relative_degrees: Optional[List[int]],
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute
@@ -1923,6 +1937,21 @@ class CompatibleClfCbf:
                [-∂V/∂x*f(x)-κ_V*V(x)]
                [                 bu ]
 
+        In the journal paper, the HOCBF formula is given by a vector Phi(x)≥ 0
+        If the HOCBF has relative degree r, then the Phi(x) vector would be:
+        Phi(x) = [Phi_0(x), Phi_1(x), ..., Phi_(r-1)(x), Phi_r(x)],
+        where Phi_0(x) = h(x), Phi_1(x)...Phi_(r-1)(x) are computed by
+        "Lower_lie_derivative" function in utils.py.
+
+        Here, in the ξ(x) and Λ(x), we incorperate the Phi_r(x).
+        For example, if the HOCBF has relative degree r=3, then Λ(x) and ξ(x) are:
+        Λ(x) =  [-Lf²Lgh(x),]
+                [ LgV(x),   ]
+                [ Au        ]
+        ξ(x) =  [(β1 + β2 + β3)Lf²h(x) + (β1β2 + β2β3 + β1β3)Lfh(x) + (β1β2β3)h(x),]
+                [ LfV(x) + κ_VV(x),]
+                [ bu               ]
+
         Args:
           V: The CLF function. If with_clf is False, then V is None.
           h: An array of CBFs. h[i] is the CBF for the i'th unsafe region.
@@ -1931,33 +1960,79 @@ class CompatibleClfCbf:
         Returns:
           (xi, lambda_mat) ξ(x) and Λ(x) in the documentation above.
         """
+        # function input check:
+        assert h.shape[0] == self.num_cbf
+        if high_order_kappah is not None:
+            assert self.high_order_cbf
+            assert relative_degrees is not None
+            assert len(high_order_kappah) == self.num_cbf
+            assert len(relative_degrees) == self.num_cbf
+        else:
+            assert (
+                kappa_h is not None
+                ), "kappa_h and high_order_kappah should not be both none"
+            assert len(kappa_h) == self.num_cbf
         if self.with_clf:
             assert V is not None
             assert isinstance(V, sym.Polynomial)
-            dVdx = V.Jacobian(self.x)
-            xi_rows = self.num_cbf + 1
+            num_rows = self.num_cbf + 1
         else:
             assert V is None
-            dVdx = None
-            xi_rows = self.num_cbf
+            num_rows = self.num_cbf
             assert h.size > 1, "You should use multiple CBF when with_clf is False."
         if self.Au is not None:
-            xi_rows += self.Au.shape[0]
-        assert h.shape == (self.num_cbf,)
-        assert kappa_h.shape == h.shape
-        dhdx = np.concatenate(
-            [h[i].Jacobian(self.x).reshape((1, -1)) for i in range(h.size)], axis=0
-        )
-        lambda_mat = np.empty((xi_rows, self.nu), dtype=object)
-        lambda_mat[: self.num_cbf] = -dhdx @ self.g
-        xi = np.empty((xi_rows,), dtype=object)
-        xi[: self.num_cbf] = dhdx @ self.f + kappa_h * h
+            num_rows += self.Au.shape[0]
 
+        # create empty Λ(x) and ξ(x)
+        lambda_mat = np.empty((num_rows, self.nu), dtype=object)
+        xi = np.empty((num_rows,), dtype=object)
+
+        # (1) Loading CBFs or HOCBFs constraints:
+        if high_order_kappah is not None:
+            for i in range(self.num_cbf):
+                current_cbf = h[i]
+                current_r = relative_degrees[i]
+                # xi part
+                beta_vector = elementary_symmetric_polynomials(high_order_kappah[i])
+                lie_derivative_vector = np.empty(
+                    shape=(current_r+1,), dtype=sym.Polynomial
+                    )
+                lie_derivative_vector[-1] = current_cbf
+                for j in range(current_r, 0, -1):
+                    lie_derivative_vector[j-1] = lie_derivative(
+                        poly=lie_derivative_vector[j],
+                        vector_feild=self.f,
+                        variables=self.x,
+                        pow=1
+                    )
+                xi_element = np.dot(lie_derivative_vector, beta_vector)
+                xi[i] = xi_element
+                # lambda part
+                # compute Lf⁽ʳ⁻¹⁾Lgh(x) = ∂Lf⁽ʳ⁻¹⁾h(x)/∂x * g(x):
+                LfLgb = lie_derivative(
+                    poly=lie_derivative_vector[1],
+                    vector_feild=self.g,
+                    variables=self.x,
+                    pow=1
+                    )
+                lambda_element = -LfLgb
+                lambda_mat[i] = lambda_element
+        else:
+            dhdx = np.concatenate(
+                [h[i].Jacobian(self.x).reshape((1, -1)) for i in range(h.size)],
+                axis=0
+            )
+            lambda_mat[: self.num_cbf] = -dhdx @ self.g
+            xi[: self.num_cbf] = dhdx @ self.f + kappa_h * h
+
+        # (2) Loading CLF constraints:
         if self.with_clf:
             assert V is not None
-            assert dVdx is not None
+            dVdx = V.Jacobian(self.x)
             lambda_mat[self.num_cbf] = dVdx @ self.g
             xi[self.num_cbf] = -dVdx.dot(self.f) - kappa_V * V
+
+        # (3) Loading input constraints:
         if self.Au is not None:
             lambda_mat[-self.Au.shape[0] :] = self.Au
             xi[-self.Au.shape[0] :] = self.bu
@@ -2317,7 +2392,12 @@ class CompatibleClfCbf:
             )
 
         xi, lambda_mat = self._calc_xi_Lambda(
-            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
+            V=V,
+            h=h,
+            kappa_V=kappa_V,
+            kappa_h=kappa_h,
+            high_order_kappah=None,
+            relative_degrees=None,
         )
 
         if self.u_vertices is not None or self.u_extreme_rays is not None:

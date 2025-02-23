@@ -70,7 +70,7 @@ def lower_lie_derivatives(
         Lf^nb(x)+(βn+βn-1+...+β2+β1)Lf^(n-1)b(x)+
         ...
         +β1β2b(x)≥0,
-    this function computes an array of polynomials:
+    this function computes the following array of polynomials:
         Lfb(x)+β1b(x)
         Lf^2b(x)+(β2+β1)Lfb(x)+β1β2b(x)
         ...
@@ -78,6 +78,9 @@ def lower_lie_derivatives(
     this function computes the elements:
       Phi_1(x), Phi_2(x), ..., Phi_(n-1)(x) (without Phi_0(x))
     in that vector, where n is the relative degree.
+
+    Noted that Phi_0(x) is the CBF itself, and Phi_n(x) will be computed in the
+    Λ(x) matrix and ξ(x) vector.
     """
 
     output = np.empty(relative_degree - 1, dtype=object)
