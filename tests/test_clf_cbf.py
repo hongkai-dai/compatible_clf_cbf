@@ -595,14 +595,13 @@ class TestClfCbf(object):
             f=f,
             g=g,
             x=x,
-            exclude_sets=[],
+            exclude_sets=[mut.ExcludeSet(np.array([sym.Polynomial(x[0] + 1)]))],
             within_set=None,
             Au=np.array([[1], [-1]]),
             bu=np.array([1, 1]),
             num_cbf=2,
             high_order_cbf=True,
-            with_clf=True,
-            test_mode=True
+            with_clf=True
         )
         V = sym.Polynomial(x[0] ** 2 + x[1] ** 2)
         h = np.array([sym.Polynomial(1 - x[0]), sym.Polynomial(1 + x[0])])

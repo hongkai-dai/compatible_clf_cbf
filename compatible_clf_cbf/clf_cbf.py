@@ -1091,8 +1091,7 @@ class CompatibleClfCbf:
         high_order_cbf: bool = False,
         with_clf: bool = True,
         use_y_squared: bool = True,
-        state_eq_constraints: Optional[np.ndarray] = None,
-        test_mode: bool = False,
+        state_eq_constraints: Optional[np.ndarray] = None
     ):
         """
         Args:
@@ -1160,10 +1159,9 @@ class CompatibleClfCbf:
         self.x_set: sym.Variables = sym.Variables(x)
         check_array_of_polynomials(f, self.x_set)
         check_array_of_polynomials(g, self.x_set)
-        if not test_mode:
-            assert (
-                (exclude_sets != []) or (within_set is not None)
-            ), "The exclude_sets and within_set cannot be both None"
+        assert (
+            (exclude_sets != []) or (within_set is not None)
+        ), "The exclude_sets and within_set cannot be both None"
         self.exclude_sets = exclude_sets
         self.within_set = within_set
         assert (Au is None) == (bu is None)
@@ -1947,7 +1945,7 @@ class CompatibleClfCbf:
 
         Here, in the ξ(x) and Λ(x), we incorperate the Phi_r(x).
         For example, if the HOCBF has relative degree r=3, then Λ(x) and ξ(x) are:
-        Λ(x) =  [-Lf³Lgh(x),]
+        Λ(x) =  [-Lf²Lgh(x),]
                 [ LgV(x),   ]
                 [ Au        ]
         ξ(x) =  [(β1 + β2 + β3)Lf²h(x) + (β1β2 + β2β3 + β1β3)Lfh(x) + (β1β2β3)h(x),]
@@ -2010,14 +2008,9 @@ class CompatibleClfCbf:
                 xi_element = np.dot(lie_derivative_vector, beta_vector)
                 xi[i] = xi_element
                 # lambda part
-                Lfb_r_1 = lie_derivative(
-                    poly=current_cbf,
-                    vector_feild=self.f,
-                    variables=self.x,
-                    pow=current_r-1
-                    )
+                # compute Lf⁽ʳ⁻¹⁾Lgh(x) = ∂Lf⁽ʳ⁻¹⁾h(x)/∂x * g(x):
                 LfLgb = lie_derivative(
-                    poly=Lfb_r_1,
+                    poly=lie_derivative_vector[1],
                     vector_feild=self.g,
                     variables=self.x,
                     pow=1
