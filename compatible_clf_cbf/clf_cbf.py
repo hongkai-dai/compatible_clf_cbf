@@ -320,9 +320,6 @@ class CompatibleLagrangianDegrees:
             degree=self.h_plus_eps,
             lagrangian=h_plus_eps_lagrangian,
         )
-        assert (self.lower_lie_derivative is None) == (
-            lower_lie_derivative_lagrangian is None
-        )
         lower_lie_derivative = (
             None
             if self.lower_lie_derivative is None
@@ -334,7 +331,9 @@ class CompatibleLagrangianDegrees:
                     sos_type,
                     is_sos=True,
                     degree=self.lower_lie_derivative[i],
-                    lagrangian=lower_lie_derivative_lagrangian[i],
+                    lagrangian=(lower_lie_derivative_lagrangian[i]
+                                if lower_lie_derivative_lagrangian is not None
+                                else None),
                 )
                 for i in range(len(self.lower_lie_derivative))
             ]
@@ -547,7 +546,11 @@ class CompatibleWVrepLagrangianDegrees:
                         sos_type,
                         is_sos=True,
                         degree=self.lower_lie_derivative[i],
-                        lagrangian=lower_lie_derivative_lagrangian[i],
+                        lagrangian=(
+                            lower_lie_derivative_lagrangian[i]
+                            if lower_lie_derivative_lagrangian is not None
+                            else None
+                            ),
                     )
                     for i in range(len(self.lower_lie_derivative))
                 ]
@@ -1089,6 +1092,7 @@ class CompatibleClfCbf:
         u_extreme_rays: Optional[np.ndarray] = None,
         num_cbf: int = 1,
         high_order_cbf: bool = False,
+        relative_degrees: Optional[List[int]] = None,
         with_clf: bool = True,
         use_y_squared: bool = True,
         state_eq_constraints: Optional[np.ndarray] = None
@@ -1188,6 +1192,13 @@ class CompatibleClfCbf:
         self.use_y_squared = use_y_squared
         self.num_cbf = num_cbf
         self.high_order_cbf = high_order_cbf
+        if high_order_cbf:
+            assert relative_degrees is not None
+            assert len(relative_degrees) == num_cbf
+            self.relative_degrees = relative_degrees
+        else:
+            assert relative_degrees is None
+            self.relative_degrees = None
         y_size = (
             self.num_cbf
             + (1 if self.with_clf else 0)
@@ -1377,9 +1388,7 @@ class CompatibleClfCbf:
             V=V,
             h=h,
             kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
+            kappa_h=kappa_h
         )
         if self.u_vertices is not None or self.u_extreme_rays is not None:
             assert isinstance(lagrangians, CompatibleWVrepLagrangians)
@@ -1390,6 +1399,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=lagrangians,
+                kappa_h=kappa_h,
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -1403,6 +1413,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=lagrangians,
+                kappa_h=kappa_h,
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -1521,7 +1532,8 @@ class CompatibleClfCbf:
             )
         elif compatible_states_options is not None:
             self._add_compatible_states_options(
-                prog, V, h, compatible_states_options, high_order_kappah=None
+                prog, V, h, compatible_states_options, 
+                high_order_kappah=(kappa_h if self.high_order_cbf else None),
             )
 
         result = solve_with_id(
@@ -1925,8 +1937,6 @@ class CompatibleClfCbf:
         h: np.ndarray,
         kappa_V: Optional[float],
         kappa_h: Optional[np.ndarray],
-        high_order_kappah: Optional[np.ndarray],
-        relative_degrees: Optional[List[int]],
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute
@@ -1962,16 +1972,10 @@ class CompatibleClfCbf:
         """
         # function input check:
         assert h.shape[0] == self.num_cbf
-        if high_order_kappah is not None:
-            assert self.high_order_cbf
-            assert relative_degrees is not None
-            assert len(high_order_kappah) == self.num_cbf
-            assert len(relative_degrees) == self.num_cbf
-        else:
-            assert (
-                kappa_h is not None
-                ), "kappa_h and high_order_kappah should not be both none"
-            assert len(kappa_h) == self.num_cbf
+        if self.high_order_cbf:
+            assert self.relative_degrees is not None
+            assert len(kappa_h.shape) == 2
+            assert kappa_h.shape[0] == self.num_cbf
         if self.with_clf:
             assert V is not None
             assert isinstance(V, sym.Polynomial)
@@ -1988,12 +1992,12 @@ class CompatibleClfCbf:
         xi = np.empty((num_rows,), dtype=object)
 
         # (1) Loading CBFs or HOCBFs constraints:
-        if high_order_kappah is not None:
+        if self.high_order_cbf:
             for i in range(self.num_cbf):
                 current_cbf = h[i]
-                current_r = relative_degrees[i]
+                current_r = self.relative_degrees[i]
                 # xi part
-                beta_vector = elementary_symmetric_polynomials(high_order_kappah[i])
+                beta_vector = elementary_symmetric_polynomials(kappa_h[i])
                 lie_derivative_vector = np.empty(
                     shape=(current_r+1,), dtype=sym.Polynomial
                     )
@@ -2048,6 +2052,7 @@ class CompatibleClfCbf:
         xi: np.ndarray,
         lambda_mat: np.ndarray,
         lagrangians: CompatibleLagrangians,
+        kappa_h: Optional[np.ndarray],
         barrier_eps: Optional[np.ndarray],
         local_clf: bool,
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
@@ -2074,6 +2079,9 @@ class CompatibleClfCbf:
         To certify the emptiness of the set in (2), we can use the sufficient condition
         -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(h(x)+ε) is sos                     (4)
         s₃(x, y), s₄(x, y) are all sos.
+
+        If the CBF is HOCBF, then we also need to extend some terms in the sos polynomial condition (4):
+        -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(h(x)+ε) - s₅(x, y)ᵀPhi[1:r-1]  is sos
 
         Note that we do NOT add the constraint
         s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
@@ -2119,6 +2127,22 @@ class CompatibleClfCbf:
             assert lagrangians.h_plus_eps is not None
             poly -= lagrangians.h_plus_eps.dot(barrier_eps + h)
 
+        # if the CBF is HOCBF, compute s₅(x, y)ᵀPhi[1:r-1]:
+        if lagrangians.lower_lie_derivative is not None:
+            assert len(lagrangians.lower_lie_derivative) == self.num_cbf
+            assert len(kappa_h.shape) == 2
+            assert self.relative_degrees is not None 
+            for i in range(self.num_cbf):
+                lower_lie_derivative_polynomials = lower_lie_derivatives(
+                    poly=h[i], 
+                    vector_field=self.f, 
+                    variables=self.x,
+                    relative_degree=self.relative_degrees[i],
+                    betas=kappa_h[i]
+                )
+                poly -= lagrangians.lower_lie_derivative[i].dot(lower_lie_derivative_polynomials)
+                
+        # if we also have state equation constraints.
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
             poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
@@ -2135,6 +2159,7 @@ class CompatibleClfCbf:
         xi: np.ndarray,
         lambda_mat: np.ndarray,
         lagrangians: CompatibleWVrepLagrangians,
+        kappa_h: Optional[np.ndarray],
         barrier_eps: Optional[np.ndarray],
         local_clf: bool,
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
@@ -2191,6 +2216,20 @@ class CompatibleClfCbf:
 
         poly -= lagrangians.h_plus_eps.dot(h + barrier_eps)
 
+        # if the CBF is HOCBF, compute s₅(x, y)ᵀPhi[1:r-1]:
+        if lagrangians.lower_lie_derivative is not None:
+            assert len(lagrangians.lower_lie_derivative) == self.num_cbf
+            for i in range(self.num_cbf):
+                lower_lie_derivative_polynomials = lower_lie_derivatives(
+                    poly=h[i], 
+                    vector_field=self.f, 
+                    variables=self.x,
+                    relative_degree=self.relative_degrees[i],
+                    betas=kappa_h[i]
+                )
+                poly -= lagrangians.lower_lie_derivative[i].dot(lower_lie_derivative_polynomials)
+
+        # if we also have state equation constraints:
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
             poly -= lagrangians.state_eq_constraints.dot(self.state_eq_constraints)
@@ -2395,9 +2434,7 @@ class CompatibleClfCbf:
             V=V,
             h=h,
             kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
+            kappa_h=kappa_h
         )
 
         if self.u_vertices is not None or self.u_extreme_rays is not None:
@@ -2409,6 +2446,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=compatible_lagrangians_new,
+                kappa_h=kappa_h,
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -2422,6 +2460,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=compatible_lagrangians_new,
+                kappa_h=kappa_h,
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -2595,9 +2634,12 @@ class CompatibleClfCbf:
         compatible_states_options: CompatibleStatesOptions,
         # set the following arguments for HOCBFs:
         high_order_kappah: Optional[List[List[float]]],
-    ):
-        if high_order_kappah is not None:
+    ):  
+        if self.relative_degrees is not None:
+            assert high_order_kappah is not None
             assert len(high_order_kappah) == len(h)
+        else:
+            assert high_order_kappah is None
         compatible_states_options.add_cost(
             prog=prog,
             x=self.x,
