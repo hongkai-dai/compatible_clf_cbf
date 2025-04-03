@@ -331,9 +331,11 @@ class CompatibleLagrangianDegrees:
                     sos_type,
                     is_sos=True,
                     degree=self.lower_lie_derivative[i],
-                    lagrangian=(lower_lie_derivative_lagrangian[i]
-                                if lower_lie_derivative_lagrangian is not None
-                                else None),
+                    lagrangian=(
+                        lower_lie_derivative_lagrangian[i]
+                        if lower_lie_derivative_lagrangian is not None
+                        else None
+                    ),
                 )
                 for i in range(len(self.lower_lie_derivative))
             ]
@@ -550,7 +552,7 @@ class CompatibleWVrepLagrangianDegrees:
                             lower_lie_derivative_lagrangian[i]
                             if lower_lie_derivative_lagrangian is not None
                             else None
-                            ),
+                        ),
                     )
                     for i in range(len(self.lower_lie_derivative))
                 ]
@@ -1095,7 +1097,7 @@ class CompatibleClfCbf:
         relative_degrees: Optional[List[int]] = None,
         with_clf: bool = True,
         use_y_squared: bool = True,
-        state_eq_constraints: Optional[np.ndarray] = None
+        state_eq_constraints: Optional[np.ndarray] = None,
     ):
         """
         Args:
@@ -1163,8 +1165,8 @@ class CompatibleClfCbf:
         self.x_set: sym.Variables = sym.Variables(x)
         check_array_of_polynomials(f, self.x_set)
         check_array_of_polynomials(g, self.x_set)
-        assert (
-            (exclude_sets != []) or (within_set is not None)
+        assert (exclude_sets != []) or (
+            within_set is not None
         ), "The exclude_sets and within_set cannot be both None"
         self.exclude_sets = exclude_sets
         self.within_set = within_set
@@ -1385,10 +1387,7 @@ class CompatibleClfCbf:
         )
 
         xi, lambda_mat = self._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h
+            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
         )
         if self.u_vertices is not None or self.u_extreme_rays is not None:
             assert isinstance(lagrangians, CompatibleWVrepLagrangians)
@@ -1532,7 +1531,10 @@ class CompatibleClfCbf:
             )
         elif compatible_states_options is not None:
             self._add_compatible_states_options(
-                prog, V, h, compatible_states_options, 
+                prog,
+                V,
+                h,
+                compatible_states_options,
                 high_order_kappah=(kappa_h if self.high_order_cbf else None),
             )
 
@@ -1999,15 +2001,15 @@ class CompatibleClfCbf:
                 # xi part
                 beta_vector = elementary_symmetric_polynomials(kappa_h[i])
                 lie_derivative_vector = np.empty(
-                    shape=(current_r+1,), dtype=sym.Polynomial
-                    )
+                    shape=(current_r + 1,), dtype=sym.Polynomial
+                )
                 lie_derivative_vector[-1] = current_cbf
                 for j in range(current_r, 0, -1):
-                    lie_derivative_vector[j-1] = lie_derivative(
+                    lie_derivative_vector[j - 1] = lie_derivative(
                         poly=lie_derivative_vector[j],
                         vector_feild=self.f,
                         variables=self.x,
-                        pow=1
+                        pow=1,
                     )
                 xi_element = np.dot(lie_derivative_vector, beta_vector)
                 xi[i] = xi_element
@@ -2017,14 +2019,13 @@ class CompatibleClfCbf:
                     poly=lie_derivative_vector[1],
                     vector_feild=self.g,
                     variables=self.x,
-                    pow=1
-                    )
+                    pow=1,
+                )
                 lambda_element = -LfLgb
                 lambda_mat[i] = lambda_element
         else:
             dhdx = np.concatenate(
-                [h[i].Jacobian(self.x).reshape((1, -1)) for i in range(h.size)],
-                axis=0
+                [h[i].Jacobian(self.x).reshape((1, -1)) for i in range(h.size)], axis=0
             )
             lambda_mat[: self.num_cbf] = -dhdx @ self.g
             xi[: self.num_cbf] = dhdx @ self.f + kappa_h * h
@@ -2131,17 +2132,19 @@ class CompatibleClfCbf:
         if lagrangians.lower_lie_derivative is not None:
             assert len(lagrangians.lower_lie_derivative) == self.num_cbf
             assert len(kappa_h.shape) == 2
-            assert self.relative_degrees is not None 
+            assert self.relative_degrees is not None
             for i in range(self.num_cbf):
                 lower_lie_derivative_polynomials = lower_lie_derivatives(
-                    poly=h[i], 
-                    vector_field=self.f, 
+                    poly=h[i],
+                    vector_field=self.f,
                     variables=self.x,
                     relative_degree=self.relative_degrees[i],
-                    betas=kappa_h[i]
+                    betas=kappa_h[i],
                 )
-                poly -= lagrangians.lower_lie_derivative[i].dot(lower_lie_derivative_polynomials)
-                
+                poly -= lagrangians.lower_lie_derivative[i].dot(
+                    lower_lie_derivative_polynomials
+                )
+
         # if we also have state equation constraints.
         if self.state_eq_constraints is not None:
             assert lagrangians.state_eq_constraints is not None
@@ -2221,13 +2224,15 @@ class CompatibleClfCbf:
             assert len(lagrangians.lower_lie_derivative) == self.num_cbf
             for i in range(self.num_cbf):
                 lower_lie_derivative_polynomials = lower_lie_derivatives(
-                    poly=h[i], 
-                    vector_field=self.f, 
+                    poly=h[i],
+                    vector_field=self.f,
                     variables=self.x,
                     relative_degree=self.relative_degrees[i],
-                    betas=kappa_h[i]
+                    betas=kappa_h[i],
                 )
-                poly -= lagrangians.lower_lie_derivative[i].dot(lower_lie_derivative_polynomials)
+                poly -= lagrangians.lower_lie_derivative[i].dot(
+                    lower_lie_derivative_polynomials
+                )
 
         # if we also have state equation constraints:
         if self.state_eq_constraints is not None:
@@ -2431,10 +2436,7 @@ class CompatibleClfCbf:
             )
 
         xi, lambda_mat = self._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h
+            V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
         )
 
         if self.u_vertices is not None or self.u_extreme_rays is not None:
@@ -2634,7 +2636,7 @@ class CompatibleClfCbf:
         compatible_states_options: CompatibleStatesOptions,
         # set the following arguments for HOCBFs:
         high_order_kappah: Optional[List[List[float]]],
-    ):  
+    ):
         if self.relative_degrees is not None:
             assert high_order_kappah is not None
             assert len(high_order_kappah) == len(h)
