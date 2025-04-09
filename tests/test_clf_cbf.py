@@ -586,7 +586,7 @@ class TestClfCbf(object):
         V = sym.Polynomial(x[0] ** 2 + x[1] ** 2)
         h = np.array([sym.Polynomial(1 - x[0]), sym.Polynomial(1 + x[0])])
         kappa_V = 0.01
-        kappah = np.array([[0.1, 0.1], [0.1, 0.1]])
+        kappah = [[0.1, 0.1], [0.1, 0.1]]
         # compute the expected Lambda and xi by hand:
         LfV = 2 * x[0] * x[1]
         LgV = 2 * x[1]
@@ -741,7 +741,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            kappa_h=None,
+            high_order_kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -809,7 +809,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            kappa_h=None,
+            high_order_kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -885,7 +885,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            kappa_h=None,
+            high_order_kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -1872,7 +1872,7 @@ class TestCLfCbfWHocbfs:
         cls.h = np.array([sym.Polynomial(cls.x[0] + 5), sym.Polynomial(-cls.x[0] + 5)])
 
         cls.kappa_V = 0.1
-        cls.kappa_h = np.array([[1, 1], [1, 1]])
+        cls.kappa_h = [[1, 1], [1, 1]]
         cls.relative_degrees = [2, 2]
         cls.barrier_eps = np.array([0.01, 0.01])
 
@@ -1926,7 +1926,7 @@ class TestCLfCbfWHocbfs:
             xi=xi_vec,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            kappa_h=self.kappa_h,
+            high_order_kappa_h=self.kappa_h,
             barrier_eps=self.barrier_eps,
             local_clf=True,
         )
@@ -2003,7 +2003,7 @@ class TestCLfCbfWHocbfs:
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            kappa_h=self.kappa_h,
+            high_order_kappa_h=self.kappa_h,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
