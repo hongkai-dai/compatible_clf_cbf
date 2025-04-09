@@ -1364,7 +1364,7 @@ class CompatibleClfCbf:
         V: Optional[sym.Polynomial],
         h: np.ndarray,
         kappa_V: Optional[float],
-        kappa_h: Tuple[np.ndarray, List[List[float]]],
+        kappa_h: Union[np.ndarray, List[List[float]]],
         lagrangian_degrees: Union[
             CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
         ],
@@ -1440,7 +1440,7 @@ class CompatibleClfCbf:
         V: Optional[sym.Polynomial],
         h: np.ndarray,
         kappa_V: Optional[float],
-        kappa_h: Tuple[np.ndarray, List[List[float]]],
+        kappa_h: Union[np.ndarray, List[List[float]]],
         barrier_eps: np.ndarray,
         compatible_lagrangian_degrees: Union[
             CompatibleLagrangianDegrees, CompatibleWVrepLagrangianDegrees
@@ -1501,7 +1501,7 @@ class CompatibleClfCbf:
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
         kappa_V: Optional[float],
-        kappa_h: Tuple[np.ndarray, List[List[float]]],
+        kappa_h: Union[np.ndarray, List[List[float]]],
         barrier_eps: np.ndarray,
         *,
         ellipsoid_inner: Optional[ellipsoid_utils.Ellipsoid] = None,
@@ -1706,7 +1706,7 @@ class CompatibleClfCbf:
         ],
         safety_sets_lagrangian_degrees: SafetySetLagrangianDegrees,
         kappa_V: Optional[float],
-        kappa_h: Tuple[float, List[List[float]]],
+        kappa_h: Union[np.ndarray, List[List[float]]],
         barrier_eps: np.ndarray,
         x_equilibrium: np.ndarray,
         clf_degree: Optional[int],
@@ -1954,7 +1954,7 @@ class CompatibleClfCbf:
         V: Optional[sym.Polynomial],
         h: np.ndarray,
         kappa_V: Optional[float],
-        kappa_h: Tuple[np.ndarray, List[List[float]]],
+        kappa_h: Union[np.ndarray, List[List[float]]],
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute
@@ -2356,7 +2356,7 @@ class CompatibleClfCbf:
         cbf_degrees: List[int],
         x_equilibrium: Optional[np.ndarray],
         kappa_V: Optional[float],
-        kappa_h: Tuple[np.ndarray, List[List[float]]],
+        kappa_h: Union[np.ndarray, List[List[float]]],
         barrier_eps: np.ndarray,
         local_clf: bool = True,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
