@@ -1052,9 +1052,9 @@ class CompatibleClfCbf:
     the entire space.
     By Farkas lemma, this is equivalent to the following set being empty
 
-    {(x, y) | [y(0)]ᵀ*[-∂h/∂x*g(x)] = 0, [y(0)]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1, y>=0} (1)
+    {(x, y) | [y(0)]ᵀ*[-∂h/∂x*g(x)] = 0, [y(0)]ᵀ*[ ∂h/∂x*f(x)+κ_h*h(x)] = -1, y >= 0 }
               [y(1)]  [ ∂V/∂x*g(x)]      [y(1)]  [-∂V/∂x*f(x)-κ_V*V(x)]
-
+                                                                                    (1)
     We can then use Positivstellensatz to certify the emptiness of this set.
 
     The same math applies to multiple CBFs, or when u is constrained within a
@@ -1414,7 +1414,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=lagrangians,
-                high_order_kappa_h=(kappa_h if self.high_order_cbf else None),
+                kappa_h=(kappa_h if self.high_order_cbf else None),
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -1428,7 +1428,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=lagrangians,
-                high_order_kappa_h=(kappa_h if self.high_order_cbf else None),
+                kappa_h=(kappa_h if self.high_order_cbf else None),
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -2073,7 +2073,7 @@ class CompatibleClfCbf:
         xi: np.ndarray,
         lambda_mat: np.ndarray,
         lagrangians: CompatibleLagrangians,
-        high_order_kappa_h: Optional[List[List[float]]],
+        kappa_h: Optional[List[List[float]]],
         barrier_eps: Optional[np.ndarray],
         local_clf: bool,
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
@@ -2103,14 +2103,30 @@ class CompatibleClfCbf:
 
         If the CBF is HOCBF, then we also need to extend some terms in the sos polynomial condition (4):
         -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(h(x)+ε) - s₅(x, y)ᵀPhi[1:r-1]  is sos
-
+                                                                                                                    
+                                                                                                                      (5)
         Note that we do NOT add the constraint
         s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
         in this function. The user should add this constraint separately.
 
-        if the CBFs are HOCBFs, this function still needs all high_order_kappa_h as kappa_h for each HOCBFs.
-        But if the CBFs are just relative degree 1, then we don't need the high_order_kappa_h, and the kappa_h constant
-        is already included in the xi vector.
+        If the CBFs are HOCBFs, this function still needs kappa_h for construction of SOS comaptibility constraint.
+        But if the CBFs are just relative degree 1, then we don't need the kappa_h, since the kappa_h constant
+        is already included in the xi vector. Let's use a simple example to exaplain this:
+
+        If the CBF is h(x) and the relative degree is 1, then the compatibility SOS constraint is shown as (3) or (4).
+        We don't need kappa_h and kappa_V in this case since they are already included in the xi vector.
+        
+        However, if the CBF is h(x) and the relative degree is 2, we will then have the following relationship:
+        Phi_0(x) = h(x)
+        Phi_1(x) = Lfh(x) + kappa1_h * h(x)
+        Phi_2(x) = LfLgh(x)*u + Lf²h(x) + (kappa1_h + kappa2_h) * Lfh(x) + (kappa1_h * kappa2_h) * h(x)
+        We use Phi_2(x) ≥ 0 to replace the first row of xi and lambda_mat. The kappa_h now is a list of floats such that
+        kappa_h = [kappa1_h, kappa2_h]. The SOS compatibility constraint is shown as (5).
+        We can see that (5) needs Phi_1(x), hence it needs kappa_h even if xi and lambda_mat already include kappa2_h.
+
+        Hence, kappa_h is an optional parameter. If the CBFs are just relative degree 1, we can set kappa_h=None.
+        If the CBFs are HOCBFs, we need to set kappa_h as a list. Note that we may also have multiple HOCBFs,
+        so the kappa_h is assumed to be a list of list of floats.
 
         Returns:
           poly: The polynomial on the left hand side of equation (3) or (4).
@@ -2154,17 +2170,17 @@ class CompatibleClfCbf:
 
         # if the CBF is HOCBF, compute s₅(x, y)ᵀPhi[1:r-1]
         if lagrangians.lower_lie_derivative is not None:
-            assert high_order_kappa_h is not None
+            assert kappa_h is not None
             assert len(lagrangians.lower_lie_derivative) == self.num_cbf
             assert self.relative_degrees is not None
             for i in range(self.num_cbf):
-                assert len(high_order_kappa_h[i]) == self.relative_degrees[i]
+                assert len(kappa_h[i]) == self.relative_degrees[i]
                 lower_lie_derivative_polynomials = lower_lie_derivatives(
                     poly=h[i],
                     vector_field=self.f,
                     variables=self.x,
                     relative_degree=self.relative_degrees[i],
-                    betas=high_order_kappa_h[i],
+                    betas=kappa_h[i],
                 )
                 poly -= lagrangians.lower_lie_derivative[i].dot(
                     lower_lie_derivative_polynomials
@@ -2187,7 +2203,7 @@ class CompatibleClfCbf:
         xi: np.ndarray,
         lambda_mat: np.ndarray,
         lagrangians: CompatibleWVrepLagrangians,
-        high_order_kappa_h: Optional[List[List[float]]],
+        kappa_h: Optional[List[List[float]]],
         barrier_eps: Optional[np.ndarray],
         local_clf: bool,
         sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
@@ -2246,16 +2262,16 @@ class CompatibleClfCbf:
 
         # if the CBF is HOCBF, compute s₅(x, y)ᵀPhi[1:r-1]:
         if lagrangians.lower_lie_derivative is not None:
-            assert high_order_kappa_h is not None
+            assert kappa_h is not None
             assert len(lagrangians.lower_lie_derivative) == self.num_cbf
             for i in range(self.num_cbf):
-                assert len(high_order_kappa_h[i]) == self.relative_degrees[i]
+                assert len(kappa_h[i]) == self.relative_degrees[i]
                 lower_lie_derivative_polynomials = lower_lie_derivatives(
                     poly=h[i],
                     vector_field=self.f,
                     variables=self.x,
                     relative_degree=self.relative_degrees[i],
-                    betas=high_order_kappa_h[i],
+                    betas=kappa_h[i],
                 )
                 poly -= lagrangians.lower_lie_derivative[i].dot(
                     lower_lie_derivative_polynomials
@@ -2474,7 +2490,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=compatible_lagrangians_new,
-                high_order_kappa_h=(kappa_h if self.high_order_cbf else None),
+                kappa_h=(kappa_h if self.high_order_cbf else None),
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,
@@ -2488,7 +2504,7 @@ class CompatibleClfCbf:
                 xi=xi,
                 lambda_mat=lambda_mat,
                 lagrangians=compatible_lagrangians_new,
-                high_order_kappa_h=(kappa_h if self.high_order_cbf else None),
+                kappa_h=(kappa_h if self.high_order_cbf else None),
                 barrier_eps=barrier_eps,
                 local_clf=local_clf,
                 sos_type=compatible_sos_type,

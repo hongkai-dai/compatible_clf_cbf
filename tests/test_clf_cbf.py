@@ -741,7 +741,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            high_order_kappa_h=None,
+            kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -809,7 +809,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            high_order_kappa_h=None,
+            kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -885,7 +885,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            high_order_kappa_h=None,
+            kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -1926,7 +1926,7 @@ class TestCLfCbfWHocbfs:
             xi=xi_vec,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            high_order_kappa_h=self.kappa_h,
+            kappa_h=self.kappa_h,
             barrier_eps=self.barrier_eps,
             local_clf=True,
         )
@@ -2003,7 +2003,7 @@ class TestCLfCbfWHocbfs:
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
-            high_order_kappa_h=self.kappa_h,
+            kappa_h=self.kappa_h,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
