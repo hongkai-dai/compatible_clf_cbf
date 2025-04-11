@@ -2103,7 +2103,7 @@ class CompatibleClfCbf:
 
         If the CBF is HOCBF, then we also need to extend some terms in the sos polynomial condition (4):
         -1 - s₀(x, y)ᵀ Λ(x)ᵀy² - s₁(x, y)(ξ(x)ᵀy²+1) - s₃(x, y)(1 − V) - s₄(x, y)ᵀ(h(x)+ε) - s₅(x, y)ᵀPhi[1:r-1]  is sos
-                                                                                                                    
+
                                                                                                                       (5)
         Note that we do NOT add the constraint
         s₂(x, y), s₃(x, y), s₄(x, y) are all sos.
@@ -2115,7 +2115,7 @@ class CompatibleClfCbf:
 
         If the CBF is h(x) and the relative degree is 1, then the compatibility SOS constraint is shown as (3) or (4).
         We don't need kappa_h and kappa_V in this case since they are already included in the xi vector.
-        
+
         However, if the CBF is h(x) and the relative degree is 2, we will then have the following relationship:
         Phi_0(x) = h(x)
         Phi_1(x) = Lfh(x) + kappa1_h * h(x)
