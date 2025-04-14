@@ -7,6 +7,7 @@ import pytest  # noqa
 
 import pydrake.solvers as solvers
 import pydrake.symbolic as sym
+import pydrake.systems.controllers as controller
 
 import compatible_clf_cbf.ellipsoid_utils as ellipsoid_utils
 import compatible_clf_cbf.utils as utils
@@ -80,7 +81,7 @@ class TestCompatibleStatesOptions:
             h=h,
             high_order_kappah=None,
             f=None,
-            )
+        )
         assert V_relu is not None
         assert phi_relu is None
 
@@ -168,8 +169,8 @@ class TestCompatibleStatesOptions:
             V=V,
             h=h,
             high_order_kappah=high_order_kappah,
-            f=system_drift
-            )
+            f=system_drift,
+        )
         assert V_relu is not None
         assert phi_relu is not None
         assert len(phi_relu) == h.shape[0]
@@ -210,16 +211,16 @@ class TestCompatibleStatesOptions:
                     relative_degree=dut.relative_degrees[i],
                     betas=high_order_kappah[i],
                 )
-                assert len(lower_lie_derivative_polys_i) == dut.relative_degrees[i]-1
+                assert len(lower_lie_derivative_polys_i) == dut.relative_degrees[i] - 1
                 phi_relu_expected_i = np.array(
                     [
                         np.maximum(
                             np.zeros(dut.candidate_compatible_states.shape[0]),
                             -lower_lie_derivative_polys_i[j].EvaluateIndeterminates(
                                 x, dut.candidate_compatible_states.T
-                            )
+                            ),
                         ).reshape((-1,))
-                        for j in range(dut.relative_degrees[i]-1)
+                        for j in range(dut.relative_degrees[i] - 1)
                     ]
                 )
                 phi_relu_expected.append(phi_relu_expected_i)
@@ -228,9 +229,8 @@ class TestCompatibleStatesOptions:
             np.testing.assert_allclose(result.GetSolution(h_relu), h_relu_expected)
             for i in range(len(phi_relu)):
                 np.testing.assert_allclose(
-                    result.GetSolution(phi_relu[i]),
-                    phi_relu_expected[i]
-                    )
+                    result.GetSolution(phi_relu[i]), phi_relu_expected[i]
+                )
 
             for constraints in [constraint1, constraint2, constraint3]:
                 for c in constraints:
@@ -438,14 +438,7 @@ class TestClfCbf(object):
         )
         kappa_V = 0.01
         kappa_h = np.array([0.02, 0.03])
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
-            )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
         assert xi.shape == (1 + dut.num_cbf,)
         assert lambda_mat.shape == (1 + dut.num_cbf, dut.nu)
         dhdx = np.empty((2, 3), dtype=object)
@@ -488,14 +481,7 @@ class TestClfCbf(object):
         )
         kappa_V = None
         kappa_h = np.array([0.02, 0.03])
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
-            )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
         assert xi.shape == (dut.num_cbf,)
         assert lambda_mat.shape == (dut.num_cbf, dut.nu)
         dhdx = np.empty((2, 3), dtype=object)
@@ -537,14 +523,7 @@ class TestClfCbf(object):
         )
         kappa_V = 0.01
         kappa_h = np.array([0.02, 0.03])
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
-            )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
 
         dVdx = V.Jacobian(self.x)
         dhdx = np.empty((2, self.nx), dtype=object)
@@ -601,51 +580,48 @@ class TestClfCbf(object):
             bu=np.array([1, 1]),
             num_cbf=2,
             high_order_cbf=True,
-            with_clf=True
+            relative_degrees=[2, 2],
+            with_clf=True,
         )
         V = sym.Polynomial(x[0] ** 2 + x[1] ** 2)
         h = np.array([sym.Polynomial(1 - x[0]), sym.Polynomial(1 + x[0])])
         kappa_V = 0.01
-        high_order_kappah = [[0.1, 0.1], [0.1, 0.1]]
-        relative_degrees = [2, 2]
+        kappah = [[0.1, 0.1], [0.1, 0.1]]
         # compute the expected Lambda and xi by hand:
-        LfV = 2*x[0]*x[1]
-        LgV = 2*x[1]
+        LfV = 2 * x[0] * x[1]
+        LgV = 2 * x[1]
         Lfh1 = -x[1]
         Lfh2 = x[1]
         Lf2h1 = 0
         Lf2h2 = 0
         LgLfh1 = -1
         LgLfh2 = 1
-        beta_11 = high_order_kappah[0][0]
-        beta_12 = high_order_kappah[0][1]
-        beta_21 = high_order_kappah[1][0]
-        beta_22 = high_order_kappah[1][1]
-        lambda_mat_expected = np.array([
-            [sym.Polynomial(-LgLfh1)],
-            [sym.Polynomial(-LgLfh2)],
-            [sym.Polynomial(LgV)]
-        ])
+        beta_11 = kappah[0][0]
+        beta_12 = kappah[0][1]
+        beta_21 = kappah[1][0]
+        beta_22 = kappah[1][1]
+        lambda_mat_expected = np.array(
+            [
+                [sym.Polynomial(-LgLfh1)],
+                [sym.Polynomial(-LgLfh2)],
+                [sym.Polynomial(LgV)],
+            ]
+        )
         lambda_mat_expected = np.concatenate((lambda_mat_expected, dut.Au), axis=0)
-        xi_expected = np.array([
-            sym.Polynomial(
-                Lf2h1 + (beta_11 + beta_12) * Lfh1 + (beta_11*beta_12) * h[0]
+        xi_expected = np.array(
+            [
+                sym.Polynomial(
+                    Lf2h1 + (beta_11 + beta_12) * Lfh1 + (beta_11 * beta_12) * h[0]
                 ),
-            sym.Polynomial(
-                Lf2h2 + (beta_21 + beta_22) * Lfh2 + (beta_21*beta_22) * h[1]
+                sym.Polynomial(
+                    Lf2h2 + (beta_21 + beta_22) * Lfh2 + (beta_21 * beta_22) * h[1]
                 ),
-            sym.Polynomial(-LfV - kappa_V * V),
-        ])
+                sym.Polynomial(-LfV - kappa_V * V),
+            ]
+        )
         xi_expected = np.concatenate((xi_expected, dut.bu), axis=0)
 
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=None,
-            high_order_kappah=high_order_kappah,
-            relative_degrees=relative_degrees,
-        )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappah)
 
         assert xi.shape == xi_expected.shape
         assert lambda_mat.shape == lambda_mat_expected.shape
@@ -755,14 +731,7 @@ class TestClfCbf(object):
             state_eq_constraints=None,
         )
 
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
-            )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
 
         barrier_eps = np.array([0.01, 0.02])
         poly = dut._add_compatibility(
@@ -772,6 +741,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
+            kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -830,14 +800,7 @@ class TestClfCbf(object):
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
 
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
-            )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
         barrier_eps = np.array([0.01, 0.02])
         poly = dut._add_compatibility_w_vrep(
             prog=prog,
@@ -846,6 +809,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
+            kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -912,14 +876,7 @@ class TestClfCbf(object):
         )
         lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
 
-        xi, lambda_mat = dut._calc_xi_Lambda(
-            V=V,
-            h=h,
-            kappa_V=kappa_V,
-            kappa_h=kappa_h,
-            high_order_kappah=None,
-            relative_degrees=None,
-            )
+        xi, lambda_mat = dut._calc_xi_Lambda(V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h)
         barrier_eps = np.array([0.01, 0.02])
         poly = dut._add_compatibility_w_vrep(
             prog=prog,
@@ -928,6 +885,7 @@ class TestClfCbf(object):
             xi=xi,
             lambda_mat=lambda_mat,
             lagrangians=lagrangians,
+            kappa_h=None,
             barrier_eps=barrier_eps,
             local_clf=True,
         )
@@ -1354,7 +1312,7 @@ class TestClfCbfToy:
             relative_degrees=None,
             weight_lower_lie_derivatives=None,
             V_margin=None,
-            h_margins=None
+            h_margins=None,
         )
         V_new, h_new, result = dut.search_clf_cbf_given_lagrangian(
             compatible_lagrangians,
@@ -1883,3 +1841,199 @@ class TestCompatibleWithU:
         self.intersect_tester(
             lambda_mat, xi, u_vertices, u_extreme_rays, intersect_expected=False
         )
+
+
+class TestCLfCbfWHocbfs:
+
+    @classmethod
+    def setup_class(cls):
+        # we use a 1D double intergrator for testing
+        cls.nx = 2
+        cls.nu = 1
+        cls.x = sym.MakeVectorContinuousVariable(cls.nx, "x")
+        cls.f = np.array([sym.Polynomial(cls.x[1]), sym.Polynomial(0)])
+        cls.g = np.array([[sym.Polynomial(0)], [sym.Polynomial(1)]])
+        cls.exclude_sets = [
+            mut.ExcludeSet(
+                np.array(
+                    [sym.Polynomial(cls.x[0] + 10), sym.Polynomial(-cls.x[0] + 10)]
+                )
+            )
+        ]
+        cls.within_set = None
+
+        _, S = controller.LinearQuadraticRegulator(
+            A=np.array([[0, 1], [0, 0]]),
+            B=np.array([[0], [1]]),
+            Q=np.eye(2),
+            R=np.eye(1),
+        )
+        cls.V = sym.Polynomial(np.dot(cls.x, np.dot(S, cls.x)))
+        cls.h = np.array([sym.Polynomial(cls.x[0] + 5), sym.Polynomial(-cls.x[0] + 5)])
+
+        cls.kappa_V = 0.1
+        cls.kappa_h = [[1, 1], [1, 1]]
+        cls.relative_degrees = [2, 2]
+        cls.barrier_eps = np.array([0.01, 0.01])
+
+    def test_add_compatibility_w_hocbf(self):
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
+            Au=None,
+            bu=None,
+            num_cbf=2,
+            high_order_cbf=True,
+            relative_degrees=self.relative_degrees,
+            with_clf=True,
+            use_y_squared=True,
+        )
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(dut.xy_set)
+
+        lagrangian_degrees = mut.CompatibleLagrangianDegrees(
+            lambda_y=[mut.XYDegree(x=2, y=0)],
+            xi_y=mut.XYDegree(x=2, y=0),
+            y=None,
+            y_cross=None,
+            rho_minus_V=mut.XYDegree(x=2, y=2),
+            h_plus_eps=[mut.XYDegree(x=2, y=2), mut.XYDegree(x=2, y=2)],
+            lower_lie_derivative=[
+                [mut.XYDegree(x=2, y=2)],
+                [mut.XYDegree(x=2, y=2)],
+            ],
+            state_eq_constraints=None,
+        )
+
+        lagrangians = lagrangian_degrees.to_lagrangians(
+            prog=prog, x=dut.x_set, y=dut.y_set
+        )
+
+        xi_vec, lambda_mat = dut._calc_xi_Lambda(
+            V=self.V,
+            h=self.h,
+            kappa_V=self.kappa_V,
+            kappa_h=self.kappa_h,
+        )
+
+        poly = dut._add_compatibility(
+            prog=prog,
+            V=self.V,
+            h=self.h,
+            xi=xi_vec,
+            lambda_mat=lambda_mat,
+            lagrangians=lagrangians,
+            kappa_h=self.kappa_h,
+            barrier_eps=self.barrier_eps,
+            local_clf=True,
+        )
+
+        lower_lie_derivative_polys_h0 = utils.lower_lie_derivatives(
+            poly=self.h[0],
+            vector_field=self.f,
+            variables=self.x,
+            relative_degree=self.relative_degrees[0],
+            betas=self.kappa_h[0],
+        )
+        lower_lie_derivative_polys_h1 = utils.lower_lie_derivatives(
+            poly=self.h[1],
+            vector_field=self.f,
+            variables=self.x,
+            relative_degree=self.relative_degrees[1],
+            betas=self.kappa_h[1],
+        )
+        expected_poly = (
+            -1
+            - np.dot(lagrangians.lambda_y, np.dot(lambda_mat.T, dut.y_squared_poly))
+            - lagrangians.xi_y * (xi_vec.dot(dut.y_squared_poly) + 1)
+            - lagrangians.rho_minus_V * (1 - self.V)
+            - lagrangians.h_plus_eps.dot(self.h + self.barrier_eps)
+            - lagrangians.lower_lie_derivative[0].dot(lower_lie_derivative_polys_h0)
+            - lagrangians.lower_lie_derivative[1].dot(lower_lie_derivative_polys_h1)
+        )
+
+        assert poly.CoefficientsAlmostEqual(expected_poly, tolerance=1e-5)
+
+    def test_add_compatibility_v_rep_w_hocbf(self):
+        dut = mut.CompatibleClfCbf(
+            f=self.f,
+            g=self.g,
+            x=self.x,
+            exclude_sets=self.exclude_sets,
+            within_set=self.within_set,
+            Au=None,
+            bu=None,
+            u_vertices=np.array([[-1], [1]]),
+            u_extreme_rays=None,
+            num_cbf=2,
+            high_order_cbf=True,
+            relative_degrees=self.relative_degrees,
+            with_clf=True,
+            use_y_squared=True,
+        )
+        prog = solvers.MathematicalProgram()
+        prog.AddIndeterminates(dut.xy_set)
+
+        lagrangian_degrees = mut.CompatibleWVrepLagrangianDegrees(
+            u_vertices=[mut.XYDegree(x=2, y=2) for _ in range(dut.u_vertices.shape[0])],
+            u_extreme_rays=None,
+            y=None,
+            y_cross=None,
+            rho_minus_V=mut.XYDegree(x=2, y=2),
+            h_plus_eps=[mut.XYDegree(x=2, y=4) for _ in range(self.h.size)],
+            lower_lie_derivative=[
+                [mut.XYDegree(x=2, y=2)],
+                [mut.XYDegree(x=2, y=2)],
+            ],
+            state_eq_constraints=None,
+        )
+        lagrangians = lagrangian_degrees.to_lagrangians(prog, dut.x_set, dut.y_set)
+
+        xi, lambda_mat = dut._calc_xi_Lambda(
+            V=self.V, h=self.h, kappa_V=self.kappa_V, kappa_h=self.kappa_h
+        )
+        barrier_eps = np.array([0.01, 0.02])
+        poly = dut._add_compatibility_w_vrep(
+            prog=prog,
+            V=self.V,
+            h=self.h,
+            xi=xi,
+            lambda_mat=lambda_mat,
+            lagrangians=lagrangians,
+            kappa_h=self.kappa_h,
+            barrier_eps=barrier_eps,
+            local_clf=True,
+        )
+
+        lower_lie_derivative_polys_h0 = utils.lower_lie_derivatives(
+            poly=self.h[0],
+            vector_field=self.f,
+            variables=self.x,
+            relative_degree=self.relative_degrees[0],
+            betas=self.kappa_h[0],
+        )
+        lower_lie_derivative_polys_h1 = utils.lower_lie_derivatives(
+            poly=self.h[1],
+            vector_field=self.f,
+            variables=self.x,
+            relative_degree=self.relative_degrees[1],
+            betas=self.kappa_h[1],
+        )
+
+        expected_poly = (
+            -1
+            - lagrangians.u_vertices.dot(
+                -xi.dot(dut.y_squared_poly)
+                + dut.y_squared_poly @ (lambda_mat @ dut.u_vertices.T)
+                - 1
+            )
+            - lagrangians.rho_minus_V * (1 - self.V)
+            - lagrangians.h_plus_eps.dot(self.h + barrier_eps)
+            - lagrangians.lower_lie_derivative[0].dot(lower_lie_derivative_polys_h0)
+            - lagrangians.lower_lie_derivative[1].dot(lower_lie_derivative_polys_h1)
+        )
+
+        assert poly.CoefficientsAlmostEqual(expected_poly, tolerance=1e-5)

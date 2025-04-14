@@ -72,6 +72,10 @@ def main(with_u_bound: bool):
         h_anchor_bounds=[(np.array([0]), np.array([0.1]))],
         weight_V=1.0,
         weight_h=np.array([1.0]),
+        relative_degrees=None,
+        weight_lower_lie_derivatives=None,
+        V_margin=None,
+        h_margins=None,
     )
 
     solver_options = solvers.SolverOptions()
