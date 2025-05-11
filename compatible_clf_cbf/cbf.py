@@ -11,6 +11,8 @@ import pydrake.solvers as solvers
 import pydrake.symbolic as sym
 
 from compatible_clf_cbf.utils import (
+    lie_derivative,
+    elementary_symmetric_polynomials,
     check_array_of_polynomials,
     get_polynomial_result,
     new_sos_polynomial,
@@ -460,6 +462,14 @@ class ControlBarrier:
 class CbfConstraint:
     """
     Add the linear constraint dhdx * f(x) + dhdx * g(x)*u >= -kappa * h(x) on u.
+    However, if the CBF is HOCBF, then the CBF constraint for the control input
+    should be:
+    Lfⁿ⁻¹Lgh(x)u ≥ -[elementary symmetric vecotr of (kappa)] dot
+    [Lfⁿh(x), Lfⁿ⁻¹h(x), Lfⁿ⁻²h(x), ...Lfh(x), h(x)]
+    For example, if relative degree is 2, and kappa = [kappa₀, kappa₁],
+    then the constraint is:
+    LfLgh(x)u ≥ -Lf²h(x) - (kappa₀ + kappa₁)*Lfh(x) - (kappa₀ * kappa₁) * Lfh(x)
+    where n is the relative degree of the CBF.
     """
 
     def __init__(
@@ -468,14 +478,43 @@ class CbfConstraint:
         f: np.ndarray,
         g: np.ndarray,
         x: np.ndarray,
-        kappa: float,
+        kappa: Union[float, List[float]],
     ):
-        dhdx = h.Jacobian(x)
-        dhdx_times_f = dhdx.dot(f)
-        dhdx_times_g = dhdx @ g
-        self.rhs = -kappa * h - dhdx_times_f
-        self.lhs_coeff = dhdx_times_g
-        self.x = x
+        """
+        In order to have a consistent interface, here we check whther the
+        CBF is HOCBF by checking the type of kappa. If the input kappa is
+        a list, then we assume the CBF is HOCBF. In this case, the length
+        of the kappa list should be the same as the relative degree of the
+        HOCBF.
+        """
+        if isinstance(kappa, List):
+            assert len(kappa) > 1
+            relative_degree = len(kappa)
+            beta_elments = elementary_symmetric_polynomials(kappa)
+            lie_derivatives = np.array(
+                [
+                    lie_derivative(
+                        poly=h, vector_feild=f, variables=x, pow=j
+                    )
+                    for j in range(relative_degree, -1, -1)
+                ]
+            )
+            self.rhs = -np.dot(beta_elments, lie_derivatives)
+            Lf_n_minus_1_h = lie_derivative(
+                poly=h, vector_feild=f, variables=x, pow=relative_degree - 1
+            )
+            Lf_n_minus_1_Lg_h = lie_derivative(
+                poly=Lf_n_minus_1_h, vector_feild=g, variables=x, pow=1
+            )
+            self.lhs_coeff = Lf_n_minus_1_Lg_h
+            self.x = x
+        else:
+            dhdx = h.Jacobian(x)
+            dhdx_times_f = dhdx.dot(f)
+            dhdx_times_g = dhdx @ g
+            self.rhs = -kappa * h - dhdx_times_f
+            self.lhs_coeff = dhdx_times_g
+            self.x = x
 
     def add_to_prog(
         self, prog: solvers.MathematicalProgram, x_val: np.ndarray, u: np.ndarray

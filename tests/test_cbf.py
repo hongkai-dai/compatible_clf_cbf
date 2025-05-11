@@ -34,6 +34,18 @@ class TestCbf:
                 [sym.Polynomial(cls.x[1] * cls.x[2]), sym.Polynomial(3)],
             ]
         )
+        # for high relative degree test:
+        # this will be used to test the HOCBF constraint calculation.
+        cls.high_f = np.array([
+            sym.Polynomial(cls.x[1]),
+            sym.Polynomial(cls.x[2]),
+            sym.Polynomial(0)
+        ])
+        cls.high_g = np.array([
+            [sym.Polynomial(0)],
+            [sym.Polynomial(0)],
+            [sym.Polynomial(1)]
+        ])
 
     def linearize(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -147,3 +159,43 @@ class TestCbf:
         sos_poly_result = result.GetSolution(sos_poly)
         sos_poly_expected_result = result.GetSolution(sos_poly_expected)
         assert sos_poly_result.CoefficientsAlmostEqual(sos_poly_expected_result, 1e-5)
+
+    def test_hocbf_control_constraint(self):
+        """
+        This function tests the calculation of hocbf
+        control constraint.
+        """
+        hx = sym.Polynomial(1 - self.x[0]**2)
+        kappa_1 = 1
+        kappa_2 = 1
+        kappa_3 = 1
+        test_object = mut.CbfConstraint(
+            h=hx,
+            f=self.high_f,
+            g=self.high_g,
+            x=self.x,
+            kappa=[kappa_1, kappa_2, kappa_3]
+        )
+        dh_dx = hx.Jacobian(self.x)
+        Lf_hx = dh_dx.dot(self.high_f)
+        Lf_2_hx = Lf_hx.Jacobian(self.x).dot(self.high_f)
+        Lf_3_hx = Lf_2_hx.Jacobian(self.x).dot(self.high_f)
+        Lf_2_Lg_hx = Lf_2_hx.Jacobian(self.x).dot(self.high_g)
+        lie_derivatives_vec = np.array([Lf_3_hx, Lf_2_hx, Lf_hx, hx])
+        kappa_elements_vec = np.array([
+            1,
+            kappa_1+kappa_2+kappa_3,
+            kappa_1*kappa_2+kappa_1*kappa_3+kappa_2*kappa_3,
+            kappa_1*kappa_2*kappa_3
+        ])
+        expected_lhs_coeff = Lf_2_Lg_hx
+        expected_rhs = -lie_derivatives_vec.dot(kappa_elements_vec)
+
+        assert expected_lhs_coeff.shape == test_object.lhs_coeff.shape
+        for i in range(expected_lhs_coeff.shape[0]):
+            assert expected_lhs_coeff[i].CoefficientsAlmostEqual(
+                test_object.lhs_coeff[i], 1e-8
+            )
+        assert expected_rhs.CoefficientsAlmostEqual(
+            test_object.rhs, 1e-8
+        )
