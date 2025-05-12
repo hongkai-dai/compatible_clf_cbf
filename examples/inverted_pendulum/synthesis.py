@@ -60,7 +60,7 @@ def main(with_u_bound: bool, use_v_rep: bool, save_results: bool):
     x = sym.MakeVectorContinuousVariable(3, "x")
     pendulum = plant.InvertedPendulumPlant()
     f, g = pendulum.trig_poly_affine_dynamics(x)
-    state_eq_constr = np.array([pendulum.trig_poly_state_eq_const(x)])
+    state_eq_constr = np.array([pendulum.trig_poly_state_eq_constr(x)])
 
     # physical input constraints:
     # u ∈ [u_min, u_max]

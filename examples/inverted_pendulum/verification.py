@@ -13,7 +13,7 @@ def main(with_u_bound: bool, use_v_rep: bool):
     x = sym.MakeVectorContinuousVariable(3, "x")
     pendulum = plant.InvertedPendulumPlant()
     f, g = pendulum.trig_poly_affine_dynamics(x)
-    state_eq_constr = np.array([pendulum.trig_poly_state_eq_const(x)])
+    state_eq_constr = np.array([pendulum.trig_poly_state_eq_constr(x)])
 
     # physical input constraints:
     # u ∈ [u_min, u_max]
@@ -63,8 +63,8 @@ def main(with_u_bound: bool, use_v_rep: bool):
             ]
         )
     )
-    # note that here the exclude_set and within_set actaully identify the
-    # same safe region. We define them repetively to ensure
+    # note that here the exclude_set and within_set actually identify the
+    # same safe region. We define them repeatedly to ensure
     # all the functionalities are working.
 
     # specify the cbf relative degrees, kappa_v and kappa_h:

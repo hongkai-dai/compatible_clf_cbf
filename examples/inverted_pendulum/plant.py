@@ -14,7 +14,7 @@ define: z0 = sin(x0), z1 = cos(x0)-1, z2 = x1
 z0_dot = (z1+1)*z2,
 z1_dot = -z0*z2,
 z2_dot = g/l*z0 + 1/ml^2*u
-also, state_eq_cosnt: z0^2 + (z1 + 1)^2 - 1 = 0
+also, state_eq_constr: z0^2 + (z1 + 1)^2 - 1 = 0
 """
 
 
@@ -34,6 +34,7 @@ class InvertedPendulumPlant(pydrake.systems.framework.LeafSystem):
     The function trig_poly_linearized_dynamics is used for initializing
     the CLF using LQR.
     """
+
     m: float  # mass
     l: float  # length
     g: float  # gravity constant
@@ -57,7 +58,7 @@ class InvertedPendulumPlant(pydrake.systems.framework.LeafSystem):
         xdot: np.ndarray = self.trig_poly_dynamics(x, u)
         derivatives.SetFromVector(xdot)
 
-    def trig_poly_dynamics(self, x: np.ndarray, u: np.ndarray) -> Tuple:
+    def trig_poly_dynamics(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
         """
         This should be used for the simulations of inverted pendulum.
         """
@@ -67,7 +68,7 @@ class InvertedPendulumPlant(pydrake.systems.framework.LeafSystem):
         xDt = f + np.dot(g, u)
         return xDt
 
-    def trig_poly_affine_dynamics(self, x: np.ndarray) -> Tuple:
+    def trig_poly_affine_dynamics(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         assert x.shape == (3,)
         if x.dtype == object:  # for verification
             f = np.array(
@@ -86,7 +87,7 @@ class InvertedPendulumPlant(pydrake.systems.framework.LeafSystem):
             )
         return (f, g)
 
-    def trig_poly_state_eq_const(self, x: np.ndarray) -> sym.Polynomial:
+    def trig_poly_state_eq_constr(self, x: np.ndarray) -> sym.Polynomial:
         assert x.shape == (3,)
         return sym.Polynomial(x[0] ** 2 + (x[1] + 1) ** 2 - 1)
 

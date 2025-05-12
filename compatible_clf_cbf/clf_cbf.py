@@ -1726,7 +1726,7 @@ class CompatibleClfCbf:
         cbf_degrees: List[int],
         max_iter: int,
         *,
-        record_time: Optional[bool] = False,
+        record_time: bool = False,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
