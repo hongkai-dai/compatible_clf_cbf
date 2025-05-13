@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Union
 
 import numpy as np
 
@@ -21,7 +21,7 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
         h: np.ndarray,
         x: np.ndarray,
         kappa_V: float,
-        kappa_h: np.ndarray,
+        kappa_h: Union[np.ndarray, List[List[float]]],
         Qu: np.ndarray,
         Au: Optional[np.ndarray],
         bu: Optional[np.ndarray],
@@ -29,6 +29,11 @@ class ClfCbfController(pydrake.systems.framework.LeafSystem):
         solver_options: Optional[solvers.SolverOptions],
     ):
         super().__init__()
+        if isinstance(kappa_h, List):
+            assert len(kappa_h) == h.shape[0]
+        else:
+            assert isinstance(kappa_h, np.ndarray)
+            assert kappa_h.shape[0] == h.shape[0]
         self.nu = g.shape[1]
         self.DeclareVectorInputPort("state", x.size)
         self.action_output_index = self.DeclareVectorOutputPort(

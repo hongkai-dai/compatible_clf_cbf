@@ -14,7 +14,7 @@ import os.path
 import pickle
 from typing import List, Optional, Tuple, Union
 from typing_extensions import Self
-
+import time
 import numpy as np
 
 import pydrake.symbolic as sym
@@ -1104,6 +1104,7 @@ class CompatibleClfCbf:
         num_cbf: int = 1,
         high_order_cbf: bool = False,
         relative_degrees: Optional[List[int]] = None,
+        cbf_states: Optional[List[sym.Variables]] = None,
         with_clf: bool = True,
         use_y_squared: bool = True,
         state_eq_constraints: Optional[np.ndarray] = None,
@@ -1146,6 +1147,11 @@ class CompatibleClfCbf:
             This term should be None if the CBFs are only with relative degree 1.
             Otherwise we should use the list of integers to present the relative degrees of CBFs.
             The length of this list should be equal to num_cbf.
+          cbf_states: Optional[List[sym.variables]]
+            For high_order_cbfs, the cbf does not depend on all the states. Specifying the dependent
+            states when searching for HOCBFs can reduce the number of variables in the SDP and speed
+            up the synthesis. If the cbf_states is not None, then it should be a list of symbolic
+            variables, and the length should be num_cbf.
           with_clf: bool
             Whether to certify or search for CLF. If set to False, then we will
             certify or search multiple compatible CBFs without CLF.
@@ -1214,9 +1220,16 @@ class CompatibleClfCbf:
             assert relative_degrees is not None
             assert len(relative_degrees) == num_cbf
             self.relative_degrees = relative_degrees
+            if cbf_states is not None:
+                assert len(cbf_states) == num_cbf
+                self.cbf_states = cbf_states
+            else:
+                self.cbf_states = [self.x_set]*num_cbf
         else:
             assert relative_degrees is None
             self.relative_degrees = None
+            assert cbf_states is None
+            self.cbf_states = [self.x_set]*num_cbf
         y_size = (
             self.num_cbf
             + (1 if self.with_clf else 0)
@@ -1713,6 +1726,7 @@ class CompatibleClfCbf:
         cbf_degrees: List[int],
         max_iter: int,
         *,
+        record_time: bool = False,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
         lagrangian_coefficient_tol: Optional[float] = None,
@@ -1766,6 +1780,10 @@ class CompatibleClfCbf:
         assert len(h_init) == self.num_cbf
         cbf = h_init
 
+        if record_time:
+            total_verification_time = 0
+            total_synthesis_time = 0
+
         compatible_lagrangians = None
         safety_sets_lagrangians = None
 
@@ -1782,13 +1800,29 @@ class CompatibleClfCbf:
             ]
             for i, h_candidates_val in enumerate(h_candidates):
                 print(f"h[{i}](candidate_compatible_states)={h_candidates_val}")
+            if self.high_order_cbf:
+                for i in range(len(cbf_funs)):
+                    print(f"lower lie derivatives of h[{i}]: ")
+                    phi_i = lower_lie_derivatives(
+                        poly=cbf_funs[i],
+                        vector_field=self.f,
+                        variables=self.x,
+                        relative_degree=self.relative_degrees[i],
+                        betas=kappa_h[i],
+                    )
+                    for j in range(phi_i.shape[0]):
+                        Phi_i_j_candidates = phi_i[j].EvaluateIndeterminates(
+                            self.x,
+                            x_val.T,
+                        )
+                        print(f"phi_{i}_{j+1}={Phi_i_j_candidates}")
 
         for iteration in range(max_iter):
-            print(f"iteration {iteration}")
-            if compatible_states_options is not None:
-                evaluate_compatible_states(
-                    clf, cbf, compatible_states_options.candidate_compatible_states
-                )
+            print(f"iteration {iteration + 1}")
+
+            if record_time:
+                verification_start_time = time.time()
+
             # Search for the Lagrangians.
             (
                 compatible_lagrangians,
@@ -1809,6 +1843,13 @@ class CompatibleClfCbf:
             )
             assert compatible_lagrangians is not None
             assert safety_sets_lagrangians is not None
+
+            if record_time:
+                verification_end_time = time.time()
+                verification_time = verification_end_time - verification_start_time
+                print(f"verification time: {verification_time}")
+                total_verification_time += verification_time
+                synthesis_start_time = time.time()
 
             if inner_ellipsoid_options is not None:
                 # We use the heuristics to grow the inner ellipsoid.
@@ -1884,10 +1925,23 @@ class CompatibleClfCbf:
                     compatible_lagrangian_sos_type=lagrangian_sos_type,
                 )
                 assert cbf is not None
-        if compatible_states_options is not None:
-            evaluate_compatible_states(
-                clf, cbf, compatible_states_options.candidate_compatible_states
-            )
+
+            if record_time:
+                synthesis_end_time = time.time()
+                synthesis_time = synthesis_end_time - synthesis_start_time
+                print(f"synthesis time: {synthesis_time}")
+                total_synthesis_time += synthesis_time
+
+            if compatible_states_options is not None:
+                evaluate_compatible_states(
+                    clf, cbf, compatible_states_options.candidate_compatible_states
+                )
+        if record_time:
+            averaged_verification_time = total_verification_time / max_iter
+            averaged_synthesis_time = total_synthesis_time / max_iter
+            print(f"averaged verification time: {averaged_verification_time}")
+            print(f"averaged synthesis time: {averaged_synthesis_time}")
+
         return clf, cbf
 
     def check_compatible_at_state(
@@ -2424,8 +2478,8 @@ class CompatibleClfCbf:
         # Add CBF.
         h = np.array(
             [
-                prog.NewFreePolynomial(self.x_set, cbf_degree)
-                for cbf_degree in cbf_degrees
+                prog.NewFreePolynomial(self.cbf_states[i], cbf_degrees[i])
+                for i in range(self.num_cbf)
             ]
         )
         # We can search for the Lagrangians for the safety set as well, since
@@ -2462,6 +2516,11 @@ class CompatibleClfCbf:
                 xi_y_lagrangian=compatible_lagrangians.xi_y,
                 rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
                 h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
+                lower_lie_derivative_lagrangian=(
+                    compatible_lagrangians.lower_lie_derivative
+                    if self.high_order_cbf
+                    else None
+                ),
             )
         elif isinstance(
             compatible_lagrangian_degrees, CompatibleWVrepLagrangianDegrees
@@ -2476,6 +2535,11 @@ class CompatibleClfCbf:
                 u_extreme_rays_lagrangian=compatible_lagrangians.u_extreme_rays,
                 rho_minus_V_lagrangian=compatible_lagrangians.rho_minus_V,
                 h_plus_eps_lagrangian=compatible_lagrangians.h_plus_eps,
+                lower_lie_derivative_lagrangian=(
+                    compatible_lagrangians.lower_lie_derivative
+                    if self.high_order_cbf
+                    else None
+                ),
             )
         xi, lambda_mat = self._calc_xi_Lambda(
             V=V, h=h, kappa_V=kappa_V, kappa_h=kappa_h
@@ -2738,7 +2802,7 @@ def save_clf_cbf(
     h: np.ndarray,
     x_set: sym.Variables,
     kappa_V: Optional[float],
-    kappa_h: np.ndarray,
+    kappa_h: Union[np.ndarray, List[List[float]]],
     pickle_path: str,
 ):
     """
