@@ -27,7 +27,7 @@ class InvertedPendulumPlant(pydrake.systems.framework.LeafSystem):
     The initialization function defines the system parameters and
     also the input, state and output ports.
     The function DoCalcTimeDerivatives and trig_poly_dynamics
-    defines the dynamics of the system. There functions are used for
+    defines the dynamics of the system. These functions are used for
     simulation.
     For verification and synthesis, we use the function
     trig_poly_affine_dynamics, trig_poly_state_eq_const.

@@ -33,14 +33,14 @@ x1_dot = x0
 
 class AdaptiveCruiseControlPlant(pydrake.systems.framework.LeafSystem):
     """
-    This class defines the inverted pendulum system. It is inherited
+    This class defines the adaptive cruise control system. It is inherited
     from LeafSystem, meaning that we will use it for both the CLF-CBF
     verfication and synthesis, and also the simulation of CLF-CBF-QP
     as well.
     The initialization function defines the system parameters and
     also the input, state and output ports.
     The function DoCalcTimeDerivatives and trig_poly_dynamics
-    defines the dynamics of the system. There functions are used for
+    defines the dynamics of the system. These functions are used for
     simulation.
     For verification and synthesis, we use the function
     affine_dynamics.
