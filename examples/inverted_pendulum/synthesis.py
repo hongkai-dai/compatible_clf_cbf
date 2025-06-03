@@ -239,7 +239,7 @@ def main(with_u_bound: bool, use_v_rep: bool, save_results: bool):
             h=h,
             V_init=V_init,
             h_init=h_init,
-            x_set=x,
+            x_set=sym.Variables(x),
             kappaV=kappaV,
             kappah=kappah,
         )

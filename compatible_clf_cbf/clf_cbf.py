@@ -1224,12 +1224,12 @@ class CompatibleClfCbf:
                 assert len(cbf_states) == num_cbf
                 self.cbf_states = cbf_states
             else:
-                self.cbf_states = [self.x_set]*num_cbf
+                self.cbf_states = [self.x_set] * num_cbf
         else:
             assert relative_degrees is None
             self.relative_degrees = None
             assert cbf_states is None
-            self.cbf_states = [self.x_set]*num_cbf
+            self.cbf_states = [self.x_set] * num_cbf
         y_size = (
             self.num_cbf
             + (1 if self.with_clf else 0)
@@ -1729,11 +1729,16 @@ class CompatibleClfCbf:
         record_time: bool = False,
         solver_id: Optional[solvers.SolverId] = None,
         solver_options: Optional[solvers.SolverOptions] = None,
-        lagrangian_coefficient_tol: Optional[float] = None,
+        lagrangian_coefficient_tol: Optional[Union[float, List[float]]] = None,
         inner_ellipsoid_options: Optional[InnerEllipsoidOptions] = None,
         binary_search_scale_options: Optional[BinarySearchOptions] = None,
         compatible_states_options: Optional[CompatibleStatesOptions] = None,
-        backoff_scale: Optional[compatible_clf_cbf.utils.BackoffScale] = None,
+        backoff_scale: Optional[
+            Union[
+                compatible_clf_cbf.utils.BackoffScale,
+                List[compatible_clf_cbf.utils.BackoffScale],
+            ]
+        ] = None,
         lagrangian_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
         compatible_sos_type=solvers.MathematicalProgram.NonnegativePolynomial.kSos,
     ) -> Tuple[Optional[sym.Polynomial], np.ndarray]:
@@ -1774,6 +1779,16 @@ class CompatibleClfCbf:
             )
         assert isinstance(binary_search_scale_options, Optional[BinarySearchOptions])
         assert isinstance(compatible_states_options, Optional[CompatibleStatesOptions])
+
+        if isinstance(lagrangian_coefficient_tol, float):
+            lagrangian_coefficient_tol = [lagrangian_coefficient_tol] * max_iter
+        elif isinstance(lagrangian_coefficient_tol, List):
+            assert len(lagrangian_coefficient_tol) == max_iter
+
+        if isinstance(backoff_scale, compatible_clf_cbf.utils.BackoffScale):
+            backoff_scale = [backoff_scale] * max_iter
+        elif isinstance(backoff_scale, List):
+            assert len(backoff_scale) == max_iter
 
         iteration = 0
         clf = V_init
@@ -1837,7 +1852,11 @@ class CompatibleClfCbf:
                 safety_sets_lagrangian_degrees,
                 solver_id,
                 solver_options,
-                lagrangian_coefficient_tol,
+                lagrangian_coefficient_tol=(
+                    None
+                    if lagrangian_coefficient_tol is None
+                    else lagrangian_coefficient_tol[iteration]
+                ),
                 lagrangian_sos_type=lagrangian_sos_type,
                 compatible_sos_type=compatible_sos_type,
             )
@@ -1916,10 +1935,10 @@ class CompatibleClfCbf:
                     solver_id=solver_id,
                     solver_options=solver_options,
                     backoff_rel_scale=(
-                        None if backoff_scale is None else backoff_scale.rel
+                        None if backoff_scale is None else backoff_scale[iteration].rel
                     ),
                     backoff_abs_scale=(
-                        None if backoff_scale is None else backoff_scale.abs
+                        None if backoff_scale is None else backoff_scale[iteration].abs
                     ),
                     compatible_sos_type=compatible_sos_type,
                     compatible_lagrangian_sos_type=lagrangian_sos_type,
